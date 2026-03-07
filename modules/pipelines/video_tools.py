@@ -1,6 +1,10 @@
+import logging
+
 import torch
 
 from diffusers_helper.utils import save_bcthw_as_mp4
+
+logger = logging.getLogger(__name__)
 
 
 @torch.no_grad()
@@ -40,10 +44,10 @@ def combine_videos_sequentially_from_tensors(
         #    They should match, since the input frames should have been processed to match the generation resolution.
         #    But sanity check to ensure no mismatch occurs when the code is refactored.
         if input_frames_pt.shape[3:] != generated_frames_pt.shape[3:]:  # Compare (H,W)
-            print(
-                f"Warning: Dimension mismatch for sequential combination! Input: {input_frames_pt.shape[3:]}, Generated: {generated_frames_pt.shape[3:]}."
+            logger.warning(
+                f"Dimension mismatch for sequential combination! Input: {input_frames_pt.shape[3:]}, Generated: {generated_frames_pt.shape[3:]}."
             )
-            print(
+            logger.warning(
                 "Attempting to proceed, but this might lead to errors or unexpected video output."
             )
             # Potentially add resizing logic here if necessary, but for now, assume they match
@@ -53,11 +57,10 @@ def combine_videos_sequentially_from_tensors(
 
         # 4. Save
         save_bcthw_as_mp4(combined_video_pt, output_path, fps=target_fps, crf=crf_value)
-        print(f"Sequentially combined video (from tensors) saved to {output_path}")
+        logger.debug(
+            f"Sequentially combined video (from tensors) saved to {output_path}"
+        )
         return output_path
     except Exception as e:
-        print(f"Error in combine_videos_sequentially_from_tensors: {str(e)}")
-        import traceback
-
-        traceback.print_exc()
+        logger.exception(f"Error in combine_videos_sequentially_from_tensors: {str(e)}")
         return None

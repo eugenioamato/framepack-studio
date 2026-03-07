@@ -228,7 +228,7 @@ def connect_outputs_events(
                 except Exception as e:
                     logger.error(f"Error deleting {meta_file}: {e}")
 
-        print(f"Deleted files: {deleted_files}")
+        logger.debug(f"Deleted files: {deleted_files}")
 
         # Refresh the gallery
         new_items = get_gallery_items()

@@ -1,15 +1,18 @@
+import logging
 import os
 import cv2
 import numpy as np
 import math
 from modules.video_queue import JobStatus
 
+logger = logging.getLogger(__name__)
+
 
 def assemble_grid_video(grid_job, child_jobs, settings):
     """
     Assembles a grid video from the results of child jobs.
     """
-    print(f"Starting grid assembly for job {grid_job.id}")
+    logger.info(f"Starting grid assembly for job {grid_job.id}")
 
     output_dir = settings.get("output_dir", "outputs")
     os.makedirs(output_dir, exist_ok=True)
@@ -23,10 +26,10 @@ def assemble_grid_video(grid_job, child_jobs, settings):
     ]
 
     if not video_paths:
-        print(f"No valid video paths found for grid job {grid_job.id}")
+        logger.warning(f"No valid video paths found for grid job {grid_job.id}")
         return None
 
-    print(f"Found {len(video_paths)} videos for grid assembly.")
+    logger.info(f"Found {len(video_paths)} videos for grid assembly.")
 
     # Determine grid size (e.g., 2x2, 3x3)
     num_videos = len(video_paths)
@@ -42,7 +45,7 @@ def assemble_grid_video(grid_job, child_jobs, settings):
         fps = cap.get(cv2.CAP_PROP_FPS)
         cap.release()
     except Exception as e:
-        print(f"Error getting video properties from {video_paths[0]}: {e}")
+        logger.error(f"Error getting video properties from {video_paths[0]}: {e}")
         return None
 
     output_filename = os.path.join(output_dir, f"grid_{grid_job.id}.mp4")
@@ -87,5 +90,5 @@ def assemble_grid_video(grid_job, child_jobs, settings):
         cap.release()
     video_writer.release()
 
-    print(f"Grid video saved to {output_filename}")
+    logger.info(f"Grid video saved to {output_filename}")
     return output_filename

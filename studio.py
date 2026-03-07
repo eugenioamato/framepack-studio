@@ -14,15 +14,17 @@ console_handler.setLevel(logging.INFO)
 file_handler = logging.FileHandler("studio.log")
 file_handler.setLevel(logging.DEBUG)
 
-log_format = "%(asctime)s - [%(name)s:%(filename)s.%(funcName)-18s] - %(levelname)s - %(message)s"
-formatter = logging.Formatter(log_format)
+console_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+file_format = "%(asctime)s - [%(name)s:%(filename)s.%(funcName)-18s] - %(levelname)s - %(message)s"
+console_formatter = logging.Formatter(console_format)
+file_formatter = logging.Formatter(file_format)
 
-console_handler.setFormatter(formatter)
-file_handler.setFormatter(formatter)
+console_handler.setFormatter(console_formatter)
+file_handler.setFormatter(file_formatter)
 
 logging.basicConfig(
     level=logging.INFO,
-    format=log_format,
+    format=console_format,
     handlers=[console_handler, file_handler],
     encoding="utf-8",
     errors="ignore",  # Ignore encoding errors in log files
@@ -33,22 +35,14 @@ logging.basicConfig(
 # Suppress all common loggers
 loggers_to_error_level = [
     "accelerate",
-    # "dataset",
-    # "datasets",
     "diffusers",
-    # "filelock",
+    "httpx",
     "huggingface_hub",
-    # "hunyuan_model",
-    # "networks",
     "PIL",
-    # "qwen_vl_utils",
     "safetensors",
     "sageattention",
-    # "tokenizers",
     "torch",
     "torchvision",
-    # "transformers",
-    # "xformers",
 ]
 
 for logger_name in loggers_to_error_level:
@@ -432,9 +426,11 @@ def process(
         "save_metadata_checked": save_metadata_checked,  # NEW: Add save_metadata_checked parameter
     }
 
-    # Print teacache parameters for debugging
-    print(
-        f"Teacache parameters: use_teacache={use_teacache}, teacache_num_steps={teacache_num_steps}, teacache_rel_l1_thresh={teacache_rel_l1_thresh}"
+    logging.getLogger(__name__).debug(
+        "Teacache parameters: use_teacache=%s, teacache_num_steps=%s, teacache_rel_l1_thresh=%s",
+        use_teacache,
+        teacache_num_steps,
+        teacache_rel_l1_thresh,
     )
 
     # Add LoRA values if provided - extract them from the tuple
@@ -452,7 +448,7 @@ def process(
         job.generation_type = (
             model_type  # Set generation_type to model_type for display in queue
         )
-    print(f"Added job {job_id} to queue")
+    logging.getLogger(__name__).info("Added job %s to queue", job_id)
 
     # Return immediately after adding to queue
     # Return separate updates for start_button and end_button to prevent cross-contamination

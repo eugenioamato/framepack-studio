@@ -3,8 +3,12 @@ Video pipeline class for FramePack Studio.
 This pipeline handles the "Video" model type.
 """
 
+import logging
+
 from diffusers_helper.bucket_tools import find_nearest_bucket
 from .base_pipeline import BasePipeline
+
+logger = logging.getLogger(__name__)
 
 
 class VideoPipeline(BasePipeline):
@@ -104,7 +108,7 @@ class VideoPipeline(BasePipeline):
             processed_inputs["combine_with_source"] = job_params.get(
                 "combine_with_source"
             )
-            print(
+            logger.debug(
                 f"Video pipeline: combine_with_source = {processed_inputs['combine_with_source']}"
             )
 
@@ -113,7 +117,7 @@ class VideoPipeline(BasePipeline):
             processed_inputs["num_cleaned_frames"] = job_params.get(
                 "num_cleaned_frames"
             )
-            print(
+            logger.debug(
                 f"Video pipeline: num_cleaned_frames = {processed_inputs['num_cleaned_frames']}"
             )
 

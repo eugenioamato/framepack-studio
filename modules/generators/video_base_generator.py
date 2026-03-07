@@ -1,3 +1,4 @@
+import logging
 import torch
 import os
 import numpy as np
@@ -15,6 +16,8 @@ from diffusers_helper.bucket_tools import find_nearest_bucket
 from diffusers_helper.hunyuan import vae_encode
 from .base_generator import BaseModelGenerator
 from shared import QuantizationFormat, timer
+
+logger = logging.getLogger(__name__)
 
 
 class VideoBaseModelGenerator(BaseModelGenerator):
@@ -44,8 +47,8 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             self.decord = decord
             self.tqdm = tqdm
         except ImportError:
-            print(
-                "Warning: decord or tqdm not installed. Video processing will not work."
+            logger.warning(
+                "decord or tqdm not installed. Video processing will not work."
             )
             self.decord = None
             self.tqdm = None
@@ -62,7 +65,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
         Load the Video transformer model.
         If offline mode is True, attempts to load from a local snapshot.
         """
-        print(f"Loading {self.model_name} Transformer...")
+        logger.info(f"Loading {self.model_name} Transformer...")
 
         path_to_load = self.model_path  # Initialize with the default path
 
@@ -91,7 +94,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             # In high VRAM mode, move the entire model to GPU
             self.transformer.to(device=self.gpu)
 
-        print(f"{self.model_name} Transformer Loaded from {path_to_load}.")
+        logger.info(f"{self.model_name} Transformer Loaded from {path_to_load}.")
         return self.transformer
 
     def min_real_frames_to_encode(self, real_frames_available_count):
@@ -128,20 +131,11 @@ class VideoBaseModelGenerator(BaseModelGenerator):
                 27  # Enough for even Video F1 with cleaned_frames input of 10
             )
         else:
-            print("======================================================")
-            print(
-                f"    *****    Warning: Unsupported video extension model type: {self.get_model_name()}."
+            logger.warning(
+                f"Unsupported video extension model type: {self.get_model_name()}. "
+                f"Using default max latents {max_latents_used_for_context} for context. "
+                "Please report to the developers: Discord: https://discord.gg/8Z2c3a4 or GitHub: https://github.com/colinurbs/FramePack-Studio"
             )
-            print(
-                "    *****    Using default max latents {max_latents_used_for_context} for context."
-            )
-            print(
-                "    *****    Please report to the developers if you see this message:"
-            )
-            print(
-                "    *****    Discord: https://discord.gg/8Z2c3a4 or GitHub: https://github.com/colinurbs/FramePack-Studio"
-            )
-            print("======================================================")
             # Probably better to press on with Video F1 max vs exception?
             # raise ValueError(f"Unsupported video extension model type: {self.get_model_name()}")
 
@@ -155,7 +149,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             real_frames_available_count, max_real_frames_used_for_context
         )
         if trimmed_real_frames_count < real_frames_available_count:
-            print(
+            logger.debug(
                 f"Truncating video frames from {real_frames_available_count} to {trimmed_real_frames_count}, enough to populate context"
             )
 
@@ -164,7 +158,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             trimmed_real_frames_count // latent_size_factor
         ) * latent_size_factor
         if frames_to_encode_count != trimmed_real_frames_count:
-            print(
+            logger.debug(
                 f"Truncating video frames from {trimmed_real_frames_count} to {frames_to_encode_count}, for latent size compatibility"
             )
 
@@ -205,7 +199,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
 
         # Normalize video path for Windows compatibility
         video_path = str(pathlib.Path(video_path).resolve())
-        print(f"Processing video: {video_path}")
+        logger.info(f"Processing video: {video_path}")
 
         # Check if the video is in the temp directory and if we have an input_files_dir
         if input_files_dir and "temp" in video_path:
@@ -215,7 +209,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
 
             # If the file exists in input_files_dir, use that instead
             if os.path.exists(input_file_path):
-                print(f"Using video from input_files_dir: {input_file_path}")
+                logger.debug(f"Using video from input_files_dir: {input_file_path}")
                 video_path = input_file_path
             else:
                 # If not, copy it to input_files_dir to prevent it from being deleted
@@ -227,25 +221,25 @@ class VideoBaseModelGenerator(BaseModelGenerator):
                     import shutil
 
                     shutil.copy2(video_path, input_file_path)
-                    print(f"Copied video to input_files_dir: {input_file_path}")
+                    logger.debug(f"Copied video to input_files_dir: {input_file_path}")
                     video_path = input_file_path
                 except Exception as e:
-                    print(f"Error copying video to input_files_dir: {e}")
+                    logger.error(f"Error copying video to input_files_dir: {e}")
 
         try:
             # Load video and get FPS
-            print("Initializing VideoReader...")
+            logger.debug("Initializing VideoReader...")
             vr = decord.VideoReader(video_path)
             fps = vr.get_avg_fps()  # Get input video FPS
             num_real_frames = len(vr)
-            print(f"Video loaded: {num_real_frames} frames, FPS: {fps}")
+            logger.info(f"Video loaded: {num_real_frames} frames, FPS: {fps}")
 
             # Read frames
-            print("Reading video frames...")
+            logger.debug("Reading video frames...")
 
             total_frames_in_video_file = len(vr)
             if is_for_encode:
-                print(
+                logger.debug(
                     f"Using minimum real frames to encode: {self.min_real_frames_to_encode(total_frames_in_video_file)}"
                 )
                 num_real_frames = self.min_real_frames_to_encode(
@@ -276,11 +270,11 @@ class VideoBaseModelGenerator(BaseModelGenerator):
                 frame_indices_to_extract
             ).asnumpy()  # Shape: (num_real_frames, height, width, channels)
 
-            print(f"Frames read: {frames.shape}")
+            logger.debug(f"Frames read: {frames.shape}")
 
             # Get native video resolution
             native_height, native_width = frames.shape[1], frames.shape[2]
-            print(f"Native video resolution: {native_width}x{native_height}")
+            logger.debug(f"Native video resolution: {native_width}x{native_height}")
 
             # Use native resolution if height/width not specified, otherwise use provided values
             target_height = native_height
@@ -291,9 +285,9 @@ class VideoBaseModelGenerator(BaseModelGenerator):
                 target_height, target_width = find_nearest_bucket(
                     target_height, target_width, resolution=resolution
                 )
-                print(f"Adjusted resolution: {target_width}x{target_height}")
+                logger.debug(f"Adjusted resolution: {target_width}x{target_height}")
             else:
-                print(
+                logger.debug(
                     f"Using native resolution without resizing: {target_width}x{target_height}"
                 )
 
@@ -312,27 +306,21 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             input_frames_resized_np = np.stack(
                 input_frames_resized_np
             )  # Shape: (num_real_frames, height, width, channels)
-            print(f"Frames preprocessed: {input_frames_resized_np.shape}")
+            logger.debug(f"Frames preprocessed: {input_frames_resized_np.shape}")
 
             resized_frames_time_millis = time_millis()
-            if False:  # We really need a logger
-                print("======================================================")
-                memory_bytes = input_frames_resized_np.nbytes
-                memory_kb = memory_bytes / 1024
-                memory_mb = memory_kb / 1024
-                print(
-                    f"    *****    input_frames_resized_np: {input_frames_resized_np.shape}"
-                )
-                print(f"    *****    Memory usage: {int(memory_mb)} MB")
-                duration_ms = resized_frames_time_millis - encode_start_time_millis
-                print(
-                    f"    *****    Time taken to process frames tensor: {duration_ms / 1000.0:.2f} seconds"
-                )
-                print("======================================================")
+            memory_bytes = input_frames_resized_np.nbytes
+            memory_mb = memory_bytes / (1024 * 1024)
+            duration_ms = resized_frames_time_millis - encode_start_time_millis
+            logger.debug(
+                f"input_frames_resized_np: {input_frames_resized_np.shape}, "
+                f"Memory usage: {int(memory_mb)} MB, "
+                f"Time taken to process frames tensor: {duration_ms / 1000.0:.2f} seconds"
+            )
 
             return input_frames_resized_np, fps, target_height, target_width
         except Exception as e:
-            print(f"Error in extract_video_frames: {str(e)}")
+            logger.error(f"Error in extract_video_frames: {str(e)}")
             raise
 
     # RT_BORG: video_encode produce and return end_of_input_video_latent and end_of_input_video_image_np
@@ -384,7 +372,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
 
             # Check CUDA availability and fallback to CPU if needed
             if device == "cuda" and not torch.cuda.is_available():
-                print("CUDA is not available, falling back to CPU")
+                logger.warning("CUDA is not available, falling back to CPU")
                 device = "cpu"
 
             # Save first frame for CLIP vision encoding
@@ -392,7 +380,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             end_of_input_video_image_np = input_frames_resized_np[-1]
 
             # Convert to tensor and normalize to [-1, 1]
-            print("Converting frames to tensor...")
+            logger.debug("Converting frames to tensor...")
             frames_pt = torch.from_numpy(input_frames_resized_np).float() / 127.5 - 1
             frames_pt = frames_pt.permute(
                 0, 3, 1, 2
@@ -403,23 +391,25 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             frames_pt = frames_pt.permute(
                 0, 2, 1, 3, 4
             )  # Shape: (1, channels, num_real_frames, height, width)
-            print(f"Tensor shape: {frames_pt.shape}")
+            logger.debug(f"Tensor shape: {frames_pt.shape}")
 
             # Save pixel frames for use in worker
             input_video_pixels = frames_pt.cpu()
 
             # Move to device
-            print(f"Moving tensor to device: {device}")
+            logger.debug(f"Moving tensor to device: {device}")
             frames_pt = frames_pt.to(device)
-            print("Tensor moved to device")
+            logger.debug("Tensor moved to device")
 
             # Move VAE to device
-            print(f"Moving VAE to device: {device}")
+            logger.debug(f"Moving VAE to device: {device}")
             self.vae.to(device)
-            print("VAE moved to device")
+            logger.debug("VAE moved to device")
 
             # Encode frames in batches
-            print(f"Encoding input video frames in VAE batch size {vae_batch_size}")
+            logger.info(
+                f"Encoding input video frames in VAE batch size {vae_batch_size}"
+            )
             latents = []
             self.vae.eval()
             with torch.no_grad():
@@ -444,40 +434,37 @@ class VideoBaseModelGenerator(BaseModelGenerator):
                             torch.cuda.synchronize()
                         latents.append(batch_latent)
                     except RuntimeError as e:
-                        print(f"Error during VAE encoding: {str(e)}")
+                        logger.error(f"Error during VAE encoding: {str(e)}")
                         if device == "cuda" and "out of memory" in str(e).lower():
-                            print(
+                            logger.error(
                                 "CUDA out of memory, try reducing vae_batch_size or using CPU"
                             )
                         raise
 
             # Concatenate latents
-            print("Concatenating latents...")
+            logger.debug("Concatenating latents...")
             history_latents = torch.cat(
                 latents, dim=2
             )  # Shape: (1, channels, frames, height//8, width//8)
-            print(f"History latents shape: {history_latents.shape}")
+            logger.debug(f"History latents shape: {history_latents.shape}")
 
             # Get first frame's latent
             start_latent = history_latents[
                 :, :, :1
             ]  # Shape: (1, channels, 1, height//8, width//8)
-            print(f"Start latent shape: {start_latent.shape}")
+            logger.debug(f"Start latent shape: {start_latent.shape}")
 
-            if False:  # We really need a logger
-                print("======================================================")
-                memory_bytes = history_latents.nbytes
-                memory_kb = memory_bytes / 1024
-                memory_mb = memory_kb / 1024
-                print(f"    *****    history_latents: {history_latents.shape}")
-                print(f"    *****    Memory usage: {int(memory_mb)} MB")
-                print("======================================================")
+            memory_bytes = history_latents.nbytes
+            memory_mb = memory_bytes / (1024 * 1024)
+            logger.debug(
+                f"history_latents: {history_latents.shape}, Memory usage: {int(memory_mb)} MB"
+            )
 
             # Move VAE back to CPU to free GPU memory
             if device == "cuda":
                 self.vae.to(self.cpu)
                 torch.cuda.empty_cache()
-                print("VAE moved back to CPU, CUDA cache cleared")
+                logger.debug("VAE moved back to CPU, CUDA cache cleared")
 
             return (
                 start_latent,
@@ -492,7 +479,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             )
 
         except Exception as e:
-            print(f"Error in video_encode: {str(e)}")
+            logger.error(f"Error in video_encode: {str(e)}")
             raise
 
     # RT_BORG: Currently history_latents is initialized within worker() for all Video models as history_latents = video_latents
@@ -585,7 +572,7 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             import os
             import subprocess
 
-            print(
+            logger.info(
                 f"Combining source video {source_video_path} with generated video {generated_video_path}"
             )
 
@@ -612,10 +599,10 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             ffmpeg_exe = video_processor.ffmpeg_exe
 
             if not ffmpeg_exe:
-                print("FFmpeg executable not found. Cannot combine videos.")
+                logger.error("FFmpeg executable not found. Cannot combine videos.")
                 return None
 
-            print(f"Using ffmpeg at: {ffmpeg_exe}")
+            logger.debug(f"Using ffmpeg at: {ffmpeg_exe}")
 
             # Create a temporary directory for the filter script
             import tempfile
@@ -659,11 +646,11 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             generated_width, generated_height = get_video_info(generated_video_path)
 
             if not source_width or not generated_width:
-                print("Error: Could not determine video dimensions")
+                logger.error("Could not determine video dimensions")
                 return None
 
-            print(f"Source video: {source_width}x{source_height}")
-            print(f"Generated video: {generated_width}x{generated_height}")
+            logger.debug(f"Source video: {source_width}x{source_height}")
+            logger.debug(f"Generated video: {generated_width}x{generated_height}")
 
             # Calculate target dimensions (maintain aspect ratio)
             target_height = max(source_height, generated_height)
@@ -723,19 +710,16 @@ class VideoBaseModelGenerator(BaseModelGenerator):
             cmd.append(output_path)
 
             # Run the ffmpeg command
-            print(f"Running ffmpeg command: {' '.join(cmd)}")
+            logger.debug(f"Running ffmpeg command: {' '.join(cmd)}")
             subprocess.run(cmd, check=True, capture_output=True, text=True)
 
             # Clean up the filter script
             if os.path.exists(filter_script_path):
                 os.remove(filter_script_path)
 
-            print(f"Combined video saved to {output_path}")
+            logger.info(f"Combined video saved to {output_path}")
             return output_path
 
         except Exception as e:
-            print(f"Error combining videos: {str(e)}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception(f"Error combining videos: {str(e)}")
             return None

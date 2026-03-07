@@ -1,3 +1,4 @@
+import logging
 import torch
 import os  # required for os.path
 from abc import ABC, abstractmethod
@@ -15,6 +16,8 @@ from diffusers_helper.models.hunyuan_video_packed import (
 from ..settings import Settings
 from .model_configuration import ModelConfiguration
 from shared import QuantizationFormat
+
+logger = logging.getLogger(__name__)
 
 # cSpell: ignore loras
 
@@ -178,8 +181,8 @@ class BaseModelGenerator(ABC):
         """
         hf_home_dir = os.environ.get("HF_HOME")
         if not hf_home_dir:
-            print(
-                "Warning: HF_HOME environment variable not set. Cannot determine snapshot hash."
+            logger.warning(
+                "HF_HOME environment variable not set. Cannot determine snapshot hash."
             )
             return None
 
@@ -189,16 +192,18 @@ class BaseModelGenerator(ABC):
         if os.path.exists(refs_main_path):
             try:
                 with open(refs_main_path, "r") as f:
-                    print(f"Offline mode: Reading snapshot hash from: {refs_main_path}")
+                    logger.debug(
+                        f"Offline mode: Reading snapshot hash from: {refs_main_path}"
+                    )
                     return f.read().strip()
             except Exception as e:
-                print(
-                    f"Warning: Could not read snapshot hash from {refs_main_path}: {e}"
+                logger.warning(
+                    f"Could not read snapshot hash from {refs_main_path}: {e}"
                 )
                 return None
         else:
-            print(
-                f"Warning: refs/main file not found at {refs_main_path}. Cannot determine snapshot hash."
+            logger.warning(
+                f"refs/main file not found at {refs_main_path}. Cannot determine snapshot hash."
             )
             return None
 
@@ -213,15 +218,15 @@ class BaseModelGenerator(ABC):
             not hasattr(self, "model_repo_id_for_cache")
             or not self.model_repo_id_for_cache
         ):
-            print(
-                f"Warning: model_repo_id_for_cache not set in {self.__class__.__name__}. Cannot determine offline path."
+            logger.warning(
+                f"model_repo_id_for_cache not set in {self.__class__.__name__}. Cannot determine offline path."
             )
             # Fallback to model_path if it exists, otherwise None
             return str(getattr(self, "model_path", None))
 
         if not hasattr(self, "model_path") or not self.model_path:
-            print(
-                f"Warning: model_path not set in {self.__class__.__name__}. Cannot determine fallback for offline path."
+            logger.warning(
+                f"model_path not set in {self.__class__.__name__}. Cannot determine fallback for offline path."
             )
             # raise error instead of returning None?
             # raise ValueError(f"{self.__class__.__name__} must set model_path for offline loading.")
@@ -245,7 +250,7 @@ class BaseModelGenerator(ABC):
         Unload all LoRAs from the transformer model.
         """
         if self.transformer is not None:
-            print(f"Unloading all LoRAs from {self.get_model_name()} model")
+            logger.info(f"Unloading all LoRAs from {self.get_model_name()} model")
             self.transformer = lora_utils.unload_all_loras(self.transformer)
             self.verify_lora_state("After unloading LoRAs")
             import gc
@@ -259,7 +264,7 @@ class BaseModelGenerator(ABC):
         Debug function to verify the state of LoRAs in the transformer model.
         """
         if self.transformer is None:
-            print(f"[{label}] Transformer is None, cannot verify LoRA state")
+            logger.debug(f"[{label}] Transformer is None, cannot verify LoRA state")
             return
 
         has_loras = False
@@ -271,11 +276,13 @@ class BaseModelGenerator(ABC):
             )
             if adapter_names:
                 has_loras = True
-                print(f"[{label}] Transformer has LoRAs: {', '.join(adapter_names)}")
+                logger.debug(
+                    f"[{label}] Transformer has LoRAs: {', '.join(adapter_names)}"
+                )
             else:
-                print(f"[{label}] Transformer has no LoRAs in peft_config")
+                logger.debug(f"[{label}] Transformer has no LoRAs in peft_config")
         else:
-            print(f"[{label}] Transformer has no peft_config attribute")
+            logger.debug(f"[{label}] Transformer has no peft_config attribute")
 
         # Check for any LoRA modules
         for name, module in self.transformer.named_modules():
@@ -287,7 +294,7 @@ class BaseModelGenerator(ABC):
                 # print(f"[{label}] Found lora_B in module {name}")
 
         if not has_loras:
-            print(f"[{label}] No LoRA components found in transformer")
+            logger.debug(f"[{label}] No LoRA components found in transformer")
 
     def move_lora_adapters_to_device(self, target_device):
         """
@@ -297,7 +304,7 @@ class BaseModelGenerator(ABC):
         if self.transformer is None:
             return
 
-        print(f"Moving all LoRA adapters to {target_device}")
+        logger.debug(f"Moving all LoRA adapters to {target_device}")
 
         # First, find all modules with LoRA adapters
         lora_modules = []
@@ -351,7 +358,7 @@ class BaseModelGenerator(ABC):
                         if isinstance(module.scaling, torch.Tensor):
                             module.scaling = module.scaling.to(target_device)
 
-        print(f"Moved all LoRA adapters to {target_device}")
+        logger.debug(f"Moved all LoRA adapters to {target_device}")
 
     def __compute_lora_state_hash(self, lora_config: ModelConfiguration) -> str:
         """
@@ -365,7 +372,7 @@ class BaseModelGenerator(ABC):
 
         if self.transformer is None:
             # Should not happen - return a unique value
-            print("Warning: Transformer is None when computing LoRA state hash.")
+            logger.warning("Transformer is None when computing LoRA state hash.")
             from time import time
 
             m.update(str(time() * 1000).encode("utf-8"))
@@ -394,11 +401,11 @@ class BaseModelGenerator(ABC):
         if not selected_loras:
             # Only unload at this point if no LoRAs are selected
             self.unload_loras()
-            print("No LoRAs selected, skipping loading.")
+            logger.info("No LoRAs selected, skipping loading.")
             return
 
         if self.transformer is None:
-            print("Transformer model is None, cannot load LoRAs.")
+            logger.error("Transformer model is None, cannot load LoRAs.")
             return
 
         if lora_values is None:
@@ -413,7 +420,9 @@ class BaseModelGenerator(ABC):
                 if name in lora_loaded_names
             ]
         )
-        print(f"Loading LoRAs: {selected_loras} with values: {selected_lora_values}")
+        logger.info(
+            f"Loading LoRAs: {selected_loras} with values: {selected_lora_values}"
+        )
 
         active_model_configuration = ModelConfiguration.from_lora_names_and_weights(
             self.get_model_name(),
@@ -429,13 +438,13 @@ class BaseModelGenerator(ABC):
             # When the model is loaded we will always have the default previous_model_hash value
             # The only time that this can happen is when settings.reuse_model_instance is True
             # and the model is not changed, and the LoRAs are not changed.
-            print("Model configuration unchanged, skipping reload.")
+            logger.info("Model configuration unchanged, skipping reload.")
             return
 
-        print(
+        logger.debug(
             f"Previous LoRA config: {self.previous_model_configuration}, Current LoRA config: {active_model_configuration}"
         )
-        print(
+        logger.debug(
             f"Previous LoRA hash: {self.previous_model_hash}, Current LoRA hash: {active_model_hash}"
         )
 
@@ -449,7 +458,9 @@ class BaseModelGenerator(ABC):
                 load_and_apply_lora,
             )
 
-            print(f"Loading LoRAs using kohya_ss LoRAReady loader from {lora_dir}")
+            logger.info(
+                f"Loading LoRAs using kohya_ss LoRAReady loader from {lora_dir}"
+            )
 
             def _find_model_files(model_path):
                 """Get state dictionary file from specified model path
@@ -468,7 +479,7 @@ class BaseModelGenerator(ABC):
 
             try:
                 model_files = _find_model_files(self.model_path)
-                print(f"LoRA -> Found model files: {model_files}")
+                logger.debug(f"LoRA -> Found model files: {model_files}")
                 lora_paths = [
                     # not sure why the full path is not passed around and potentially trimmed for the interface display
                     str(lora_dir / f"{lora_setting.name}.safetensors")
@@ -482,7 +493,7 @@ class BaseModelGenerator(ABC):
                     lora_setting.weight
                     for lora_setting in active_model_configuration.settings.lora_settings
                 ]
-                print(f"Lora paths: {lora_paths}")
+                logger.debug(f"Lora paths: {lora_paths}")
                 if not lora_paths:
                     raise ValueError(
                         "No valid LoRA paths found for the selected LoRAs."
@@ -495,18 +506,18 @@ class BaseModelGenerator(ABC):
                     fp8_enabled=cast(bool, self.settings.get("fp8", False)),
                     device=self.gpu if torch.cuda.is_available() else self.cpu,
                 )
-                print("Loading state dict into transformer...")
+                logger.debug("Loading state dict into transformer...")
                 missing_keys, unexpected_keys = self.transformer.load_state_dict(
                     state_dict, assign=True, strict=True
                 )
 
                 if missing_keys:
-                    print(
-                        f"Warning: Missing keys when loading LoRA state dict: {missing_keys}"
+                    logger.warning(
+                        f"Missing keys when loading LoRA state dict: {missing_keys}"
                     )
                 if unexpected_keys:
-                    print(
-                        f"Warning: Unexpected keys when loading LoRA state dict: {unexpected_keys}"
+                    logger.warning(
+                        f"Unexpected keys when loading LoRA state dict: {unexpected_keys}"
                     )
 
                 state_dict_size: int = 0
@@ -516,7 +527,7 @@ class BaseModelGenerator(ABC):
                         for param in state_dict.values()
                         if hasattr(param, "numel")
                     )
-                    print(
+                    logger.debug(
                         f"State dictionary size: {state_dict_size / (1024**3):.2f} GB"
                     )
                 except Exception:
@@ -527,17 +538,16 @@ class BaseModelGenerator(ABC):
                     import gc
 
                     gc.collect()
-                    print(
+                    logger.debug(
                         f"Freed state dictionary size: {state_dict_size / (1024**3):.2f} GB"
                     )
                 except Exception:
-                    print("Could not free state dictionary from memory.")
+                    logger.warning("Could not free state dictionary from memory.")
 
             except Exception as e:
-                import traceback
-
-                print(f"Error loading LoRAs with kohya_ss LoRAReady loader: {e}")
-                traceback.print_exc()
+                logger.exception(
+                    f"Error loading LoRAs with kohya_ss LoRAReady loader: {e}"
+                )
             return
 
         if self.settings.lora_loader != LoraLoader.DIFFUSERS:
@@ -559,12 +569,12 @@ class BaseModelGenerator(ABC):
                     break
 
             if not lora_file:
-                print(
-                    f"Warning: LoRA file for base name '{lora_base_name}' not found; skipping."
+                logger.warning(
+                    f"LoRA file for base name '{lora_base_name}' not found; skipping."
                 )
                 continue
 
-            print(f"Loading LoRA from '{lora_file}'...")
+            logger.debug(f"Loading LoRA from '{lora_file}'...")
 
             self.transformer, adapter_name = lora_utils.load_lora(
                 self.transformer, lora_dir, lora_file
@@ -578,18 +588,20 @@ class BaseModelGenerator(ABC):
                     if master_list_idx < len(lora_values):
                         weight = float(lora_values[master_list_idx])
                     else:
-                        print(
-                            f"Warning: Index mismatch for '{lora_base_name}'. Defaulting to 1.0."
+                        logger.warning(
+                            f"Index mismatch for '{lora_base_name}'. Defaulting to 1.0."
                         )
                 except ValueError:
-                    print(
-                        f"Warning: LoRA '{lora_base_name}' not found in master list. Defaulting to 1.0."
+                    logger.warning(
+                        f"LoRA '{lora_base_name}' not found in master list. Defaulting to 1.0."
                     )
 
             strengths.append(weight)
 
         if adapter_names:
-            print(f"Activating adapters: {adapter_names} with strengths: {strengths}")
+            logger.info(
+                f"Activating adapters: {adapter_names} with strengths: {strengths}"
+            )
             lora_utils.set_adapters(self.transformer, adapter_names, strengths)
 
         self.verify_lora_state("After completing load_loras")

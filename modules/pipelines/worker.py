@@ -38,7 +38,7 @@ from shared import timer
 # cSpell: disable hunyan, loras
 
 logger = logging.getLogger(__name__)
-logger.info("Worker module loaded.")
+logger.debug("Worker module loaded.")
 
 
 @torch.no_grad()
@@ -60,7 +60,7 @@ def get_cached_or_encode_prompt(
     from diffusers_helper.utils import crop_or_pad_yield_mask
 
     if prompt in prompt_embedding_cache:
-        logger.info(f"Cache hit for prompt: {prompt[:60]}...")
+        logger.debug(f"Cache hit for prompt: {prompt[:60]}...")
         llama_vec_cpu, llama_mask_cpu, clip_l_pooler_cpu = prompt_embedding_cache[
             prompt
         ]
@@ -72,7 +72,7 @@ def get_cached_or_encode_prompt(
         clip_l_pooler = clip_l_pooler_cpu.to(target_device)
         return llama_vec, llama_attention_mask, clip_l_pooler
     else:
-        logger.info(f"Cache miss for prompt: {prompt[:60]}...")
+        logger.debug(f"Cache miss for prompt: {prompt[:60]}...")
         llama_vec, clip_l_pooler = encode_prompt_conds(
             prompt, text_encoder, text_encoder_2, tokenizer, tokenizer_2
         )
@@ -152,7 +152,7 @@ def worker(
                 f"Worker.py: Error - '{DUMMY_LORA_NAME}' was selected but not filtered out."
             )
         elif DUMMY_LORA_NAME in selected_loras:
-            logger.info(
+            logger.debug(
                 f"Worker.py: Filtered out '{DUMMY_LORA_NAME}' from selected LoRAs."
             )
     elif (
@@ -161,7 +161,7 @@ def worker(
         if selected_loras != DUMMY_LORA_NAME:
             actual_selected_loras_for_worker = [selected_loras]
     selected_loras = actual_selected_loras_for_worker
-    logger.info(f"Worker: Selected LoRAs for this worker: {selected_loras}")
+    logger.debug(f"Worker: Selected LoRAs for this worker: {selected_loras}")
 
     # Import globals from the main module
     from __main__ import (
@@ -184,7 +184,7 @@ def worker(
 
     # Ensure any existing LoRAs are unloaded from the current generator
     if studio_module.current_generator is not None:
-        logger.info("Worker: Unloading LoRAs from studio_module.current_generator")
+        logger.debug("Worker: Unloading LoRAs from studio_module.current_generator")
         studio_module.current_generator.unload_loras()
         import gc
 
@@ -248,7 +248,7 @@ def worker(
     from __main__ import stream as main_stream
 
     if main_stream:  # Always push to main stream regardless of whether it's the same as stream_to_use
-        logger.info(f"Pushing initial progress update to main stream for job {job_id}")
+        logger.debug(f"Pushing initial progress update to main stream for job {job_id}")
         main_stream.output_queue.push(
             (
                 "progress",
@@ -342,7 +342,7 @@ def worker(
 
         # --- Model Loading / Switching ---
         logger.info(f"Worker starting for model type: {model_type}")
-        logger.info(
+        logger.debug(
             f"Worker: Before model assignment, studio_module.current_generator is {type(studio_module.current_generator)}, id: {id(studio_module.current_generator)}"
         )
 
@@ -402,7 +402,7 @@ def worker(
 
         if force_new_generator or new_generator is not None:
             # Ensure the model has no LoRAs loaded
-            logger.info(f"Ensuring {model_type} model has no LoRAs loaded")
+            logger.debug(f"Ensuring {model_type} model has no LoRAs loaded")
             studio_module.current_generator.unload_loras()
 
         # Preprocess inputs
@@ -431,7 +431,7 @@ def worker(
                 # Save the starting image with metadata
                 save_job_start_image(job_params, job_id, settings)
 
-                logger.info(f"Saved metadata and starting image for job {job_id}")
+                logger.debug(f"Saved metadata and starting image for job {job_id}")
             except Exception as e:
                 logger.error(f"Error saving starting image and metadata: {e}")
                 logger.error(traceback.format_exc())
@@ -584,7 +584,7 @@ def worker(
                 studio_module.current_generator.set_full_video_latents(
                     video_latents.clone()
                 )
-                logger.info(
+                logger.debug(
                     f"Stored full input video latents in VideoModelGenerator. Shape: {video_latents.shape}"
                 )
 
@@ -593,12 +593,12 @@ def worker(
 
             # Store the last frame of the video latents as start_latent for the model
             start_latent = video_latents[:, :, -1:].cpu()
-            logger.info(
+            logger.debug(
                 f"Using last frame of input video as start_latent. Shape: {start_latent.shape}"
             )
-            logger.info("Placed last frame of video at position 0 in history_latents")
+            logger.debug("Placed last frame of video at position 0 in history_latents")
 
-            logger.info(
+            logger.debug(
                 f"Initialized history_latents with video context. Shape: {history_latents.shape}"
             )
 
@@ -694,7 +694,7 @@ def worker(
         if (
             model_type == "Original with Endframe" or model_type == "Video"
         ) and job_params.get("end_frame_image") is not None:
-            logger.info(f"Processing end frame for {model_type} model...")
+            logger.debug(f"Processing end frame for {model_type} model...")
             end_frame_image = job_params["end_frame_image"]
 
             if not isinstance(end_frame_image, np.ndarray):
@@ -745,7 +745,7 @@ def worker(
                     end_frame_output_dimensions_pt, vae
                 )
 
-                logger.info("End frame VAE encoded.")
+                logger.debug("End frame VAE encoded.")
 
                 # Video Mode CLIP Vision encoding for end frame
                 if model_type == "Video":
@@ -873,7 +873,7 @@ def worker(
 
             # Check for cancellation signal
             if stream_to_use.input_queue.top() == "end":
-                logger.info("Cancellation signal detected in callback")
+                logger.debug("Cancellation signal detected in callback")
                 return "cancel"  # Return a signal that will be checked in the sampler
 
             now_time = time.time()
@@ -1011,7 +1011,7 @@ def worker(
         model_family = "F1" if "F1" in model_type else "Original"
 
         if settings.get("calibrate_magcache"):  # Calibration mode (forces MagCache on)
-            logger.info("Setting Up MagCache for Calibration")
+            logger.debug("Setting Up MagCache for Calibration")
             is_calibrating = settings.get("calibrate_magcache")
             studio_module.current_generator.transformer.initialize_teacache(
                 enable_teacache=False
@@ -1028,7 +1028,7 @@ def worker(
             )
             studio_module.current_generator.transformer.install_magcache(magcache)
         elif use_magcache:  # User selected MagCache
-            logger.info("Setting Up MagCache")
+            logger.debug("Setting Up MagCache")
             magcache = MagCache(
                 model_family=model_family,
                 height=height,
@@ -1044,7 +1044,7 @@ def worker(
             )  # Ensure TeaCache is off
             studio_module.current_generator.transformer.install_magcache(magcache)
         elif use_teacache:
-            logger.info("Setting Up TeaCache")
+            logger.debug("Setting Up TeaCache")
             studio_module.current_generator.transformer.initialize_teacache(
                 enable_teacache=True,
                 num_steps=steps,
@@ -1052,7 +1052,7 @@ def worker(
             )
             studio_module.current_generator.transformer.uninstall_magcache()
         else:
-            logger.info("No Transformer Cache in use")
+            logger.debug("No Transformer Cache in use")
             studio_module.current_generator.transformer.initialize_teacache(
                 enable_teacache=False
             )
@@ -1161,7 +1161,7 @@ def worker(
                 clip_l_pooler = (
                     1 - blend_alpha
                 ) * prev_clip_l_pooler + blend_alpha * next_clip_l_pooler
-                logger.info(
+                logger.debug(
                     f"Blending prompts: '{prev_prompt[:30]}...' -> '{next_prompt[:30]}...', alpha={blend_alpha:.2f}"
                 )
             else:
@@ -1173,7 +1173,7 @@ def worker(
             if original_time_position < 0:
                 original_time_position = 0
 
-            logger.info(
+            logger.debug(
                 f"latent_padding_size = {latent_padding_size}, is_last_section = {is_last_section}, "
                 f"time position: {current_time_position:.2f}s (original: {original_time_position:.2f}s), "
                 f"using prompt: {current_prompt[:60]}..."
@@ -1185,7 +1185,7 @@ def worker(
                 and i_section_loop == 0
                 and end_frame_latent is not None
             ):
-                logger.info(
+                logger.debug(
                     f"Applying end_frame_latent to history_latents with strength: {end_frame_strength}"
                 )
                 actual_end_frame_latent_for_history = end_frame_latent.clone()
@@ -1216,7 +1216,7 @@ def worker(
                                 dtype=history_latents.dtype,  # Match history_latents' dtype
                             )
                         )
-                    logger.info(
+                    logger.debug(
                         f"End frame latent applied to history for {model_type} model."
                     )
                 else:
@@ -1285,7 +1285,7 @@ def worker(
                 )
 
             # Print debug info
-            logger.info(
+            logger.debug(
                 f"{model_type} model section {section_idx + 1}/{total_latent_sections}, latent_padding={latent_padding}"
             )
 
@@ -1402,7 +1402,7 @@ def worker(
                     history_pixels, current_pixels, overlapped_frames
                 )
 
-                logger.info(
+                logger.debug(
                     f"{model_type} model section {section_idx + 1}/{total_latent_sections}, history_pixels shape: {history_pixels.shape}"
                 )
 
@@ -1415,7 +1415,7 @@ def worker(
             save_bcthw_as_mp4(
                 history_pixels, output_filename, fps=30, crf=settings.get("mp4_crf")
             )
-            logger.info(
+            logger.debug(
                 f"Decoded. Current latent shape {real_history_latents.shape}; pixel shape {history_pixels.shape}"
             )
             stream_to_use.output_queue.push(("file", output_filename))
@@ -1435,12 +1435,12 @@ def worker(
                 output_file = os.path.join(
                     settings.get("output_dir"), "magcache_configuration.txt"
                 )
-                logger.info(
+                logger.debug(
                     f"MagCache calibration job complete. Appending stats to configuration file: {output_file}"
                 )
                 magcache.append_calibration_to_file(output_file)
             elif magcache.is_enabled:
-                logger.info(
+                logger.debug(
                     f"MagCache ({100.0 * magcache.total_cache_hits / magcache.total_cache_requests:.2f}%) skipped {magcache.total_cache_hits} of {magcache.total_cache_requests} steps."
                 )
             studio_module.current_generator.transformer.uninstall_magcache()
@@ -1448,7 +1448,7 @@ def worker(
 
         # Unload all LoRAs after generation completed
         if selected_loras:
-            logger.info("Unloading all LoRAs after generation completed")
+            logger.debug("Unloading all LoRAs after generation completed")
             studio_module.current_generator.unload_loras()
             import gc
 
@@ -1460,7 +1460,7 @@ def worker(
         logger.error(traceback.format_exc())
         # Unload all LoRAs after error
         if studio_module.current_generator is not None and selected_loras:
-            logger.info("Unloading all LoRAs after error")
+            logger.debug("Unloading all LoRAs after error")
             studio_module.current_generator.unload_loras()
             import gc
 
@@ -1491,7 +1491,7 @@ def worker(
                     for f in os.listdir(output_dir)
                     if f.startswith(f"{job_id}_") and f.endswith(".mp4")
                 ]
-                logger.info(f"Video files found for cleanup: {video_files}")
+                logger.debug(f"Video files found for cleanup: {video_files}")
                 if video_files:
 
                     def get_frame_count(filename):
@@ -1504,13 +1504,13 @@ def worker(
                             return -1
 
                     video_files_sorted = sorted(video_files, key=get_frame_count)
-                    logger.info(f"Sorted video files: {video_files_sorted}")
+                    logger.debug(f"Sorted video files: {video_files_sorted}")
                     # final_video = video_files_sorted[-1]
                     for vf in video_files_sorted[:-1]:
                         full_path = os.path.join(output_dir, vf)
                         try:
                             os.remove(full_path)
-                            logger.info(f"Deleted intermediate video: {full_path}")
+                            logger.debug(f"Deleted intermediate video: {full_path}")
                         except Exception as e:
                             logger.error(f"Failed to delete {full_path}: {e}")
             except Exception as e:
@@ -1526,7 +1526,7 @@ def worker(
             and combine_with_source
             and job_params.get("input_image_path")
         ):
-            logger.info("Creating combined video with source and generated content...")
+            logger.debug("Creating combined video with source and generated content...")
             try:
                 input_video_path = job_params.get("input_image_path")
                 if input_video_path and os.path.exists(input_video_path):
@@ -1576,7 +1576,7 @@ def worker(
                             if hasattr(
                                 studio_module.current_generator, "combine_videos"
                             ):
-                                logger.info(
+                                logger.debug(
                                     "Using VideoModelGenerator.combine_videos to create side-by-side comparison"
                                 )
                                 combined_result = studio_module.current_generator.combine_videos(
@@ -1586,7 +1586,7 @@ def worker(
                                 )
 
                                 if combined_result:
-                                    logger.info(
+                                    logger.debug(
                                         f"Combined video saved to: {combined_result}"
                                     )
                                     stream_to_use.output_queue.push(
@@ -1609,7 +1609,7 @@ def worker(
                             combined_result = None
 
                         if not combined_result:
-                            logger.info("Using fallback method to combine videos")
+                            logger.debug("Using fallback method to combine videos")
                             from modules.toolbox.toolbox_processor import VideoProcessor
                             from modules.toolbox.message_manager import MessageManager
 
@@ -1626,7 +1626,7 @@ def worker(
                             ffmpeg_exe = video_processor.ffmpeg_exe
 
                             if ffmpeg_exe:
-                                logger.info(f"Using ffmpeg at: {ffmpeg_exe}")
+                                logger.debug(f"Using ffmpeg at: {ffmpeg_exe}")
                                 import subprocess
 
                                 temp_list_file = os.path.join(
@@ -1651,7 +1651,7 @@ def worker(
                                     "copy",
                                     combined_output_filename,
                                 ]
-                                logger.info(
+                                logger.debug(
                                     f"Running ffmpeg command: {' '.join(ffmpeg_cmd)}"
                                 )
                                 subprocess.run(
@@ -1662,7 +1662,7 @@ def worker(
                                 )
                                 if os.path.exists(temp_list_file):
                                     os.remove(temp_list_file)
-                                logger.info(
+                                logger.debug(
                                     f"Combined video saved to: {combined_output_filename}"
                                 )
                                 stream_to_use.output_queue.push(
@@ -1693,7 +1693,7 @@ def worker(
             and combine_with_source
             and history_pixels is not None
         ):
-            logger.info(
+            logger.debug(
                 f"Creating combined video ({job_id}_combined.mp4) with processed input frames and generated history_pixels tensor..."
             )
             try:

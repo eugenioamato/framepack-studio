@@ -1,3 +1,4 @@
+import logging
 import torch
 from diffusers_helper.models.hunyuan_video_packed import (
     HunyuanVideoTransformer3DModelPacked,
@@ -5,6 +6,8 @@ from diffusers_helper.models.hunyuan_video_packed import (
 from diffusers_helper.memory import DynamicSwapInstaller
 from .base_generator import BaseModelGenerator
 from shared import QuantizationFormat, timer
+
+logger = logging.getLogger(__name__)
 
 
 class OriginalModelGenerator(BaseModelGenerator):
@@ -33,7 +36,7 @@ class OriginalModelGenerator(BaseModelGenerator):
         Load the Original transformer model.
         If offline mode is True, attempts to load from a local snapshot.
         """
-        print(f"Loading {self.model_name} Transformer...")
+        logger.info(f"Loading {self.model_name} Transformer...")
 
         path_to_load = self.model_path  # Initialize with the default path
 
@@ -62,7 +65,7 @@ class OriginalModelGenerator(BaseModelGenerator):
             # In high VRAM mode, move the entire model to GPU
             self.transformer.to(device=self.gpu)
 
-        print(f"{self.model_name} Transformer Loaded from {path_to_load}.")
+        logger.info(f"{self.model_name} Transformer Loaded from {path_to_load}.")
         return self.transformer
 
     def prepare_history_latents(self, height, width):

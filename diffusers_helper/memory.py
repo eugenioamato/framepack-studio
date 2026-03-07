@@ -1,6 +1,7 @@
 # By lllyasviel
 
 
+import logging
 import torch
 
 
@@ -130,7 +131,7 @@ def offload_model_from_device_for_memory_preservation(
 def unload_complete_models(*args):
     for m in gpu_complete_modules + list(args):
         m.to(device=cpu)
-        print(f"Unloaded {m.__class__.__name__} as complete.")
+        logging.getLogger(__name__).debug("Unloaded %s as complete.", m.__class__.__name__)
 
     gpu_complete_modules.clear()
     torch.cuda.empty_cache()

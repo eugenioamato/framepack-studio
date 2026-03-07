@@ -1,3 +1,4 @@
+import logging
 import threading
 import time
 import uuid
@@ -18,6 +19,8 @@ import numpy as np
 from diffusers_helper.thread_utils import AsyncStream
 from modules.pipelines.metadata_utils import create_metadata
 from modules.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 # Simple LIFO queue implementation to avoid dependency on queue.LifoQueue
@@ -103,15 +106,16 @@ class Job:
             elif isinstance(self.input_image, str):
                 # Handle string (video path)
                 try:
-                    print(
-                        f"Attempting to extract thumbnail from video: {self.input_image}"
+                    logger.debug(
+                        "Attempting to extract thumbnail from video: %s",
+                        self.input_image,
                     )
                     # Try to extract frames from the video using imageio
                     import imageio
 
                     # Check if the file exists
                     if not os.path.exists(self.input_image):
-                        print(f"Video file not found: {self.input_image}")
+                        logger.error("Video file not found: %s", self.input_image)
                         raise FileNotFoundError(
                             f"Video file not found: {self.input_image}"
                         )
@@ -122,9 +126,9 @@ class Job:
                     # Try to open the video file
                     try:
                         reader = imageio.get_reader(self.input_image)
-                        print("Successfully opened video file with imageio")
+                        logger.debug("Successfully opened video file with imageio")
                     except Exception as e:
-                        print(f"Failed to open video with imageio: {e}")
+                        logger.error("Failed to open video with imageio: %s", e)
                         raise
 
                     # Get the total number of frames
@@ -132,22 +136,22 @@ class Job:
                     try:
                         # Try to get the number of frames from metadata
                         meta_data = reader.get_meta_data()
-                        print(f"Video metadata: {meta_data}")
+                        logger.debug("Video metadata: %s", meta_data)
                         num_frames = meta_data.get("nframes")
                         if num_frames is None or num_frames == float("inf"):
-                            print("Number of frames not available in metadata")
+                            logger.debug("Number of frames not available in metadata")
                             # If not available, try to count frames
                             if hasattr(reader, "count_frames"):
-                                print("Trying to count frames...")
+                                logger.debug("Trying to count frames...")
                                 num_frames = reader.count_frames()
-                                print(f"Counted {num_frames} frames")
+                                logger.debug("Counted %d frames", num_frames)
                     except Exception as e:
-                        print(f"Error getting frame count: {e}")
+                        logger.error("Error getting frame count: %s", e)
                         num_frames = None
 
                     # If we couldn't determine the number of frames, read the last frame by iterating
                     if num_frames is None or num_frames == float("inf"):
-                        print("Reading frames by iteration to find the last one")
+                        logger.debug("Reading frames by iteration to find the last one")
                         # Read frames until we reach the end
                         frame_count = 0
                         first_frame = None
@@ -160,20 +164,23 @@ class Job:
                                 frame_count += 1
                                 # Print progress every 100 frames
                                 if frame_count % 100 == 0:
-                                    print(f"Read {frame_count} frames...")
-                            print(f"Finished reading {frame_count} frames")
+                                    logger.debug("Read %d frames...", frame_count)
+                            logger.debug("Finished reading %d frames", frame_count)
 
                             # Save the first frame if available
                             if first_frame is not None:
-                                print(
-                                    f"Found first frame with shape: {first_frame.shape}"
+                                logger.debug(
+                                    "Found first frame with shape: %s",
+                                    first_frame.shape,
                                 )
                                 # DEBUG IMAGE SAVING REMOVED
                         except Exception as e:
-                            print(f"Error reading frames: {e}")
+                            logger.error("Error reading frames: %s", e)
 
                         if last_frame is not None:
-                            print(f"Found last frame with shape: {last_frame.shape}")
+                            logger.debug(
+                                "Found last frame with shape: %s", last_frame.shape
+                            )
 
                             # DEBUG IMAGE SAVING REMOVED
                             # Use the last frame for the thumbnail
@@ -182,9 +189,11 @@ class Job:
                             buffered = io.BytesIO()
                             img.save(buffered, format="PNG")
                             self.thumbnail = f"data:image/png;base64,{base64.b64encode(buffered.getvalue()).decode()}"
-                            print("Successfully created thumbnail from last frame")
+                            logger.debug(
+                                "Successfully created thumbnail from last frame"
+                            )
                         else:
-                            print("No frames were read, using red thumbnail")
+                            logger.warning("No frames were read, using red thumbnail")
                             # Fallback to red thumbnail if no frames were read - more visible for debugging
                             img = Image.new(
                                 "RGB", (150, 150), (255, 0, 0)
@@ -199,43 +208,47 @@ class Job:
                             first_frame = None
                             try:
                                 first_frame = reader.get_data(0)
-                                print(
-                                    f"Got first frame with shape: {first_frame.shape}"
+                                logger.debug(
+                                    "Got first frame with shape: %s", first_frame.shape
                                 )
 
                                 # DEBUG IMAGE SAVING REMOVED
                             except Exception as e:
-                                print(f"Error getting first frame: {e}")
+                                logger.error("Error getting first frame: %s", e)
 
                             # Try to get a middle frame
                             middle_frame = None
                             try:
                                 middle_frame_idx = int(num_frames / 2)
                                 middle_frame = reader.get_data(middle_frame_idx)
-                                print(
-                                    f"Got middle frame (frame {middle_frame_idx}) with shape: {middle_frame.shape}"
+                                logger.debug(
+                                    "Got middle frame (frame %d) with shape: %s",
+                                    middle_frame_idx,
+                                    middle_frame.shape,
                                 )
 
                                 # DEBUG IMAGE SAVING REMOVED
                             except Exception as e:
-                                print(f"Error getting middle frame: {e}")
+                                logger.error("Error getting middle frame: %s", e)
 
                             # Try to get the last frame
                             last_frame = None
                             try:
                                 last_frame_idx = int(num_frames) - 1
                                 last_frame = reader.get_data(last_frame_idx)
-                                print(
-                                    f"Got last frame (frame {last_frame_idx}) with shape: {last_frame.shape}"
+                                logger.debug(
+                                    "Got last frame (frame %d) with shape: %s",
+                                    last_frame_idx,
+                                    last_frame.shape,
                                 )
 
                                 # DEBUG IMAGE SAVING REMOVED
                             except Exception as e:
-                                print(f"Error getting last frame: {e}")
+                                logger.error("Error getting last frame: %s", e)
 
                             # If we couldn't get the last frame directly, try to get it by iterating
                             if last_frame is None:
-                                print(
+                                logger.debug(
                                     "Trying to get last frame by iterating through all frames"
                                 )
                                 try:
@@ -243,13 +256,16 @@ class Job:
                                         last_frame = frame
 
                                     if last_frame is not None:
-                                        print(
-                                            f"Got last frame by iteration with shape: {last_frame.shape}"
+                                        logger.debug(
+                                            "Got last frame by iteration with shape: %s",
+                                            last_frame.shape,
                                         )
 
                                         # DEBUG IMAGE SAVING REMOVED
                                 except Exception as e:
-                                    print(f"Error getting last frame by iteration: {e}")
+                                    logger.error(
+                                        "Error getting last frame by iteration: %s", e
+                                    )
 
                             # Use the last frame for the thumbnail if available, otherwise use the middle or first frame
                             frame_for_thumbnail = (
@@ -269,9 +285,13 @@ class Job:
                                 buffered = io.BytesIO()
                                 img.save(buffered, format="PNG")
                                 self.thumbnail = f"data:image/png;base64,{base64.b64encode(buffered.getvalue()).decode()}"
-                                print("Successfully created thumbnail from frame")
+                                logger.debug(
+                                    "Successfully created thumbnail from frame"
+                                )
                             else:
-                                print("No frames were extracted, using blue thumbnail")
+                                logger.warning(
+                                    "No frames were extracted, using blue thumbnail"
+                                )
                                 # Fallback to blue thumbnail if no frames were extracted
                                 img = Image.new(
                                     "RGB", (150, 150), (0, 0, 255)
@@ -291,15 +311,12 @@ class Job:
                     # Close the reader
                     try:
                         reader.close()
-                        print("Successfully closed video reader")
+                        logger.debug("Successfully closed video reader")
                     except Exception as e:
-                        print(f"Error closing reader: {e}")
+                        logger.error("Error closing reader: %s", e)
 
                 except Exception as e:
-                    print(f"Error extracting thumbnail from video: {e}")
-                    import traceback
-
-                    traceback.print_exc()
+                    logger.exception("Error extracting thumbnail from video: %s", e)
                     # Fallback to bright green thumbnail on error to make it more visible
                     img = Image.new(
                         "RGB", (150, 150), (0, 255, 0)
@@ -307,7 +324,7 @@ class Job:
                     buffered = io.BytesIO()
                     img.save(buffered, format="PNG")
                     self.thumbnail = f"data:image/png;base64,{base64.b64encode(buffered.getvalue()).decode()}"
-                    print("Created bright green fallback thumbnail")
+                    logger.debug("Created bright green fallback thumbnail")
             else:
                 # Handle other types
                 self.thumbnail = None
@@ -344,7 +361,7 @@ class VideoJobQueue:
 
     def __new__(cls):
         if cls._instance is None:
-            print("Creating the VideoJobQueue instance")
+            logger.debug("Creating the VideoJobQueue instance")
             cls._instance = super(VideoJobQueue, cls).__new__(cls)
         return cls._instance
 
@@ -432,7 +449,7 @@ class VideoJobQueue:
                         # Default weight if not found
                         lora_data[lora_name] = 1.0
                     except Exception as e:
-                        print(f"Error processing LoRA {lora_name}: {e}")
+                        logger.error("Error processing LoRA %s: %s", lora_name, e)
                         lora_data[lora_name] = 1.0
 
                 # Add to serialized params
@@ -446,7 +463,7 @@ class VideoJobQueue:
 
             return serialized
         except Exception as e:
-            print(f"Error serializing job {job.id}: {e}")
+            logger.error("Error serializing job %s: %s", job.id, e)
             # Return minimal information that should always be serializable
             return {
                 "id": job.id,
@@ -485,13 +502,17 @@ class VideoJobQueue:
                             Image.fromarray(job.params["input_image"]).save(
                                 input_image_path
                             )
-                            print(
-                                f"Saved input image for job {job_id} to {input_image_path}"
+                            logger.debug(
+                                "Saved input image for job %s to %s",
+                                job_id,
+                                input_image_path,
                             )
                             # Mark the image as saved
                             job.input_image_saved = True
                         except Exception as e:
-                            print(f"Error saving input image for job {job_id}: {e}")
+                            logger.error(
+                                "Error saving input image for job %s: %s", job_id, e
+                            )
 
                     # Save end frame image to disk if it exists and hasn't been saved yet
                     if (
@@ -506,13 +527,17 @@ class VideoJobQueue:
                             Image.fromarray(job.params["end_frame_image"]).save(
                                 end_frame_image_path
                             )
-                            print(
-                                f"Saved end frame image for job {job_id} to {end_frame_image_path}"
+                            logger.debug(
+                                "Saved end frame image for job %s to %s",
+                                job_id,
+                                end_frame_image_path,
                             )
                             # Mark the end frame image as saved
                             job.end_frame_image_saved = True
                         except Exception as e:
-                            print(f"Error saving end frame image for job {job_id}: {e}")
+                            logger.error(
+                                "Error saving end frame image for job %s: %s", job_id, e
+                            )
 
             # Now serialize jobs with the updated image saved flags
             serialized_jobs = {}
@@ -559,7 +584,9 @@ class VideoJobQueue:
 
                         serialized_jobs[job_id] = metadata
                     except Exception as e:
-                        print(f"Error using metadata_utils for job {job_id}: {e}")
+                        logger.error(
+                            "Error using metadata_utils for job %s: %s", job_id, e
+                        )
                         # Fall back to the old serialization method
                         serialized_jobs[job_id] = self.serialize_job(job)
 
@@ -571,9 +598,9 @@ class VideoJobQueue:
             self.cleanup_orphaned_images(job_ids)
             self.cleanup_orphaned_videos(job_ids)
 
-            print(f"Saved {len(serialized_jobs)} jobs to queue.json")
+            logger.debug("Saved %d jobs to queue.json", len(serialized_jobs))
         except Exception as e:
-            print(f"Error saving queue to JSON: {e}")
+            logger.error("Error saving queue to JSON: %s", e)
 
     def cleanup_orphaned_videos(self, current_job_ids_uuids):  # Renamed arg for clarity
         """
@@ -637,20 +664,23 @@ class VideoJobQueue:
                         try:
                             os.remove(file_path_to_check)
                             removed_count += 1
-                            print(
-                                f"Removed orphaned video: {filename} (path: {file_path_to_check})"
+                            logger.debug(
+                                "Removed orphaned video: %s (path: %s)",
+                                filename,
+                                file_path_to_check,
                             )
                         except Exception as e:
-                            print(f"Error removing orphaned video {filename}: {e}")
+                            logger.error(
+                                "Error removing orphaned video %s: %s", filename, e
+                            )
             if removed_count > 0:
-                print(
-                    f"Cleaned up {removed_count} orphaned videos from {input_files_dir}"
+                logger.debug(
+                    "Cleaned up %d orphaned videos from %s",
+                    removed_count,
+                    input_files_dir,
                 )
         except Exception as e:
-            print(f"Error cleaning up orphaned videos: {e}")
-            import traceback
-
-            traceback.print_exc()
+            logger.exception("Error cleaning up orphaned videos: %s", e)
 
     def cleanup_orphaned_images(self, current_job_ids):
         """
@@ -685,14 +715,16 @@ class VideoJobQueue:
                             try:
                                 os.remove(file_path)
                                 removed_count += 1
-                                print(f"Removed orphaned image: {filename}")
+                                logger.debug("Removed orphaned image: %s", filename)
                             except Exception as e:
-                                print(f"Error removing orphaned image {filename}: {e}")
+                                logger.error(
+                                    "Error removing orphaned image %s: %s", filename, e
+                                )
 
             if removed_count > 0:
-                print(f"Cleaned up {removed_count} orphaned images")
+                logger.debug("Cleaned up %d orphaned images", removed_count)
         except Exception as e:
-            print(f"Error cleaning up orphaned images: {e}")
+            logger.error("Error cleaning up orphaned images: %s", e)
 
     def synchronize_queue_images(self):
         """
@@ -740,17 +772,23 @@ class VideoJobQueue:
                     try:
                         os.remove(input_image_path)
                         removed_count += 1
-                        print(f"Removed image for deleted job: {input_image_path}")
+                        logger.debug(
+                            "Removed image for deleted job: %s", input_image_path
+                        )
                     except Exception as e:
-                        print(f"Error removing image {input_image_path}: {e}")
+                        logger.error("Error removing image %s: %s", input_image_path, e)
 
                 if os.path.exists(end_frame_image_path):
                     try:
                         os.remove(end_frame_image_path)
                         removed_count += 1
-                        print(f"Removed image for deleted job: {end_frame_image_path}")
+                        logger.debug(
+                            "Removed image for deleted job: %s", end_frame_image_path
+                        )
                     except Exception as e:
-                        print(f"Error removing image {end_frame_image_path}: {e}")
+                        logger.error(
+                            "Error removing image %s: %s", end_frame_image_path, e
+                        )
 
             # Now ensure all current jobs have their images saved
             saved_count = 0
@@ -773,9 +811,11 @@ class VideoJobQueue:
                                 )
                                 job.input_image_saved = True
                                 saved_count += 1
-                                print(f"Saved input image for job {job_id}")
+                                logger.debug("Saved input image for job %s", job_id)
                             except Exception as e:
-                                print(f"Error saving input image for job {job_id}: {e}")
+                                logger.error(
+                                    "Error saving input image for job %s: %s", job_id, e
+                                )
 
                         # Save end frame image if it exists and hasn't been saved yet
                         if (
@@ -792,22 +832,26 @@ class VideoJobQueue:
                                 )
                                 job.end_frame_image_saved = True
                                 saved_count += 1
-                                print(f"Saved end frame image for job {job_id}")
+                                logger.debug("Saved end frame image for job %s", job_id)
                             except Exception as e:
-                                print(
-                                    f"Error saving end frame image for job {job_id}: {e}"
+                                logger.error(
+                                    "Error saving end frame image for job %s: %s",
+                                    job_id,
+                                    e,
                                 )
 
             # Save the queue to ensure the image paths are properly referenced
             self.save_queue_to_json()
 
             if removed_count > 0 or saved_count > 0:
-                print(
-                    f"Queue image synchronization: removed {removed_count} images, saved {saved_count} images"
+                logger.debug(
+                    "Queue image synchronization: removed %d images, saved %d images",
+                    removed_count,
+                    saved_count,
                 )
 
         except Exception as e:
-            print(f"Error synchronizing queue images: {e}")
+            logger.error("Error synchronizing queue images: %s", e)
 
     def add_job(
         self,
@@ -842,7 +886,9 @@ class VideoJobQueue:
                         end_frame_image_saved=False,
                     )
                     self.jobs[child_job_id] = child_job
-                    print(f"  - Created child job {child_job_id} for grid job {job_id}")
+                    logger.debug(
+                        "  - Created child job %s for grid job %s", child_job_id, job_id
+                    )
 
         # Find the lowest available order number for pending jobs
         used_numbers = set()
@@ -874,7 +920,7 @@ class VideoJobQueue:
         )
 
         with self.lock:
-            print(f"Adding job {job_id} (type: {job_type.value}) to queue.")
+            logger.debug("Adding job %s (type: %s) to queue.", job_id, job_type.value)
             self.jobs[job_id] = job
             self.queue.put(
                 job_id
@@ -884,7 +930,7 @@ class VideoJobQueue:
         try:
             self.save_queue_to_json()
         except Exception as e:
-            print(f"Error saving queue to JSON after adding job: {e}")
+            logger.error("Error saving queue to JSON after adding job: %s", e)
 
         return job_id
 
@@ -930,7 +976,7 @@ class VideoJobQueue:
             try:
                 self.save_queue_to_json()
             except Exception as e:
-                print(f"Error saving queue to JSON after cancelling job: {e}")
+                logger.error("Error saving queue to JSON after cancelling job: %s", e)
 
         return result
 
@@ -957,7 +1003,7 @@ class VideoJobQueue:
                             job.completed_at = time.time()
                             cancelled_count += 1
                 except Exception as e:
-                    print(f"Error cancelling job {job_id}: {e}")
+                    logger.error("Error cancelling job %s: %s", job_id, e)
 
             # Now clear the queue
             with self.lock:
@@ -972,25 +1018,22 @@ class VideoJobQueue:
                         except queue_module.Empty:
                             break
                 except Exception as e:
-                    print(f"Error clearing queue: {e}")
+                    logger.error("Error clearing queue: %s", e)
 
             # Save the updated queue state
             try:
                 self.save_queue_to_json()
             except Exception as e:
-                print(f"Error saving queue state: {e}")
+                logger.error("Error saving queue state: %s", e)
 
             # Synchronize queue images after clearing the queue
             if cancelled_count > 0:
                 self.synchronize_queue_images()
 
-            print(f"Cleared {cancelled_count} jobs from the queue")
+            logger.info("Cleared %d jobs from the queue", cancelled_count)
             return cancelled_count
         except Exception as e:
-            import traceback
-
-            print(f"Error in clear_queue: {e}")
-            traceback.print_exc()
+            logger.exception("Error in clear_queue: %s", e)
             return 0
 
     def clear_completed_jobs(self):
@@ -1014,25 +1057,24 @@ class VideoJobQueue:
                             del self.jobs[job_id]
                             removed_count += 1
                 except Exception as e:
-                    print(f"Error removing job {job_id}: {e}")
+                    logger.error("Error removing job %s: %s", job_id, e)
 
             # Save the updated queue state
             try:
                 self.save_queue_to_json()
             except Exception as e:
-                print(f"Error saving queue state: {e}")
+                logger.error("Error saving queue state: %s", e)
 
             # Synchronize queue images after removing completed jobs
             if removed_count > 0:
                 self.synchronize_queue_images()
 
-            print(f"Removed {removed_count} completed/cancelled jobs from the queue")
+            logger.info(
+                "Removed %d completed/cancelled jobs from the queue", removed_count
+            )
             return removed_count
         except Exception as e:
-            import traceback
-
-            print(f"Error in clear_completed_jobs: {e}")
-            traceback.print_exc()
+            logger.exception("Error in clear_completed_jobs: %s", e)
             return 0
 
     def remove_job(self, job_id):
@@ -1064,19 +1106,18 @@ class VideoJobQueue:
                 try:
                     self.save_queue_to_json()
                 except Exception as e:
-                    print(f"Error saving queue state after remove_job: {e}")
+                    logger.error("Error saving queue state after remove_job: %s", e)
                 # Sync images to clean up files for this job id
                 try:
                     self.synchronize_queue_images()
                 except Exception as e:
-                    print(f"Error synchronizing queue images after remove_job: {e}")
+                    logger.error(
+                        "Error synchronizing queue images after remove_job: %s", e
+                    )
 
             return removed
         except Exception as e:
-            import traceback
-
-            print(f"Error in remove_job: {e}")
-            traceback.print_exc()
+            logger.exception("Error in remove_job: %s", e)
             return False
 
     def get_queue_position(self, job_id):
@@ -1136,9 +1177,9 @@ class VideoJobQueue:
                 # Add queue.json to the zip file
                 if os.path.exists("queue.json"):
                     zipf.write("queue.json")
-                    print(f"Added queue.json to {output_path}")
+                    logger.debug("Added queue.json to %s", output_path)
                 else:
-                    print("Warning: queue.json not found, creating an empty one")
+                    logger.warning("queue.json not found, creating an empty one")
                     with open("queue.json", "w") as f:
                         json.dump({}, f)
                     zipf.write("queue.json")
@@ -1154,9 +1195,9 @@ class VideoJobQueue:
                                 os.path.basename(queue_images_dir), file
                             )
                             zipf.write(file_path, arcname)
-                            print(f"Added {file_path} to {output_path}")
+                            logger.debug("Added %s to %s", file_path, output_path)
                 else:
-                    print(f"Warning: {queue_images_dir} directory not found or empty")
+                    logger.warning("%s directory not found or empty", queue_images_dir)
                     # Create the directory if it doesn't exist
                     os.makedirs(queue_images_dir, exist_ok=True)
 
@@ -1171,20 +1212,17 @@ class VideoJobQueue:
                                 os.path.basename(input_files_dir), file
                             )
                             zipf.write(file_path, arcname)
-                            print(f"Added {file_path} to {output_path}")
+                            logger.debug("Added %s to %s", file_path, output_path)
                 else:
-                    print(f"Warning: {input_files_dir} directory not found or empty")
+                    logger.warning("%s directory not found or empty", input_files_dir)
                     # Create the directory if it doesn't exist
                     os.makedirs(input_files_dir, exist_ok=True)
 
-            print(f"Queue exported to {output_path}")
+            logger.info("Queue exported to %s", output_path)
             return output_path
 
         except Exception as e:
-            import traceback
-
-            print(f"Error exporting queue to zip: {e}")
-            traceback.print_exc()
+            logger.exception("Error exporting queue to zip: %s", e)
             return None
 
     def load_queue_from_json(self, file_path=None):
@@ -1208,7 +1246,7 @@ class VideoJobQueue:
 
             # Check if file exists
             if not os.path.exists(file_path):
-                print(f"Queue file not found: {file_path}")
+                logger.warning("Queue file not found: %s", file_path)
                 return 0
 
             # Check if it's a zip file
@@ -1227,13 +1265,13 @@ class VideoJobQueue:
                 for job_id, job_data in serialized_jobs.items():
                     # Skip if job already exists
                     if job_id in self.jobs:
-                        print(f"Job {job_id} already exists, skipping")
+                        logger.debug("Job %s already exists, skipping", job_id)
                         continue
 
                     # Skip completed, failed, or cancelled jobs
                     status = job_data.get("status")
                     if status in ["completed", "failed", "cancelled"]:
-                        print(f"Skipping job {job_id} with status {status}")
+                        logger.debug("Skipping job %s with status %s", job_id, status)
                         continue
 
                     # If the job was running when saved, we'll need to set it as the current job
@@ -1285,7 +1323,9 @@ class VideoJobQueue:
                     ):
                         try:
                             input_image_path = job_data["saved_input_image_path"]
-                            print(f"Loading input image from {input_image_path}")
+                            logger.debug(
+                                "Loading input image from %s", input_image_path
+                            )
                             input_image = np.array(Image.open(input_image_path))
                             params["input_image"] = input_image
                             params["input_image_path"] = (
@@ -1293,7 +1333,9 @@ class VideoJobQueue:
                             )
                             params["has_input_image"] = True
                         except Exception as e:
-                            print(f"Error loading input image for job {job_id}: {e}")
+                            logger.error(
+                                "Error loading input image for job %s: %s", job_id, e
+                            )
 
                     # Load video from disk if saved path exists
                     input_video_val = job_data.get("input_video")  # Get value safely
@@ -1305,12 +1347,14 @@ class VideoJobQueue:
                                 video_path = (
                                     input_video_val  # Use the validated string path
                                 )
-                                print(f"Loading video from {video_path}")
+                                logger.debug("Loading video from %s", video_path)
                                 params["input_image"] = video_path
                                 params["input_image_path"] = video_path
                                 params["has_input_image"] = True
                             except Exception as e:
-                                print(f"Error loading video for job {job_id}: {e}")
+                                logger.error(
+                                    "Error loading video for job %s: %s", job_id, e
+                                )
 
                     # Load end frame image from disk if saved path exists
                     if "saved_end_frame_image_path" in job_data and os.path.exists(
@@ -1320,8 +1364,8 @@ class VideoJobQueue:
                             end_frame_image_path = job_data[
                                 "saved_end_frame_image_path"
                             ]
-                            print(
-                                f"Loading end frame image from {end_frame_image_path}"
+                            logger.debug(
+                                "Loading end frame image from %s", end_frame_image_path
                             )
                             end_frame_image = np.array(Image.open(end_frame_image_path))
                             params["end_frame_image"] = end_frame_image
@@ -1340,12 +1384,16 @@ class VideoJobQueue:
                                     params["end_frame_strength"] = job_data.get(
                                         "end_frame_strength", 1.0
                                     )
-                                    print(
-                                        f"Set end_frame_strength to {params['end_frame_strength']} for job {job_id}"
+                                    logger.debug(
+                                        "Set end_frame_strength to %s for job %s",
+                                        params["end_frame_strength"],
+                                        job_id,
                                     )
                         except Exception as e:
-                            print(
-                                f"Error loading end frame image for job {job_id}: {e}"
+                            logger.error(
+                                "Error loading end frame image for job %s: %s",
+                                job_id,
+                                e,
                             )
 
                     # Add LoRA information if present
@@ -1389,8 +1437,12 @@ class VideoJobQueue:
                         )
                         params["lora_loaded_names"] = combined_lora_names
 
-                        print(f"Loaded LoRA data for job {job_id}: {lora_data}")
-                        print(f"Combined lora_loaded_names: {combined_lora_names}")
+                        logger.debug(
+                            "Loaded LoRA data for job %s: %s", job_id, lora_data
+                        )
+                        logger.debug(
+                            "Combined lora_loaded_names: %s", combined_lora_names
+                        )
 
                     # Get settings for output_dir and metadata_dir
                     settings = Settings()
@@ -1424,8 +1476,9 @@ class VideoJobQueue:
                     # If a job was marked "running" in the JSON, reset it to "pending"
                     # and add it to the processing queue.
                     if was_running:
-                        print(
-                            f"Job {job_id} was 'running', resetting to 'pending' and adding to queue."
+                        logger.debug(
+                            "Job %s was 'running', resetting to 'pending' and adding to queue.",
+                            job_id,
                         )
                         job.status = JobStatus.PENDING
                         job.started_at = None  # Clear started_at for re-queued job
@@ -1439,14 +1492,11 @@ class VideoJobQueue:
             # Synchronize queue images after loading the queue
             self.synchronize_queue_images()
 
-            print(f"Loaded {loaded_count} pending jobs from {file_path}")
+            logger.info("Loaded %d pending jobs from %s", loaded_count, file_path)
             return loaded_count
 
         except Exception as e:
-            import traceback
-
-            print(f"Error loading queue from JSON: {e}")
-            traceback.print_exc()
+            logger.exception("Error loading queue from JSON: %s", e)
             return 0
 
     def _load_queue_from_zip(self, zip_path):
@@ -1472,7 +1522,7 @@ class VideoJobQueue:
             # Check if queue.json exists in the extracted files
             queue_json_path = os.path.join(temp_dir, "queue.json")
             if not os.path.exists(queue_json_path):
-                print(f"queue.json not found in {zip_path}")
+                logger.warning("queue.json not found in %s", zip_path)
                 shutil.rmtree(temp_dir)
                 return 0
 
@@ -1491,42 +1541,42 @@ class VideoJobQueue:
                     dst_path = os.path.join(target_queue_images_dir, file)
                     if os.path.isfile(src_path):
                         shutil.copy2(src_path, dst_path)
-                        print(f"Copied {src_path} to {dst_path}")
+                        logger.debug("Copied %s to %s", src_path, dst_path)
 
             # Check if input_files directory exists in the extracted files
             input_files_dir = os.path.join(temp_dir, "input_files")
-            print(
-                f"DEBUG: Checking for input_files directory in zip: {input_files_dir}"
-            )  # DEBUG
+            logger.debug(
+                "Checking for input_files directory in zip: %s", input_files_dir
+            )
             if os.path.exists(input_files_dir) and os.path.isdir(input_files_dir):
-                print(
-                    f"DEBUG: Found input_files directory in zip. Contents: {os.listdir(input_files_dir)}"
-                )  # DEBUG
+                logger.debug(
+                    "Found input_files directory in zip. Contents: %s",
+                    os.listdir(input_files_dir),
+                )
                 # Copy the input_files directory to the current directory
                 target_input_files_dir = "input_files"
                 os.makedirs(target_input_files_dir, exist_ok=True)
 
                 # Copy all files from the extracted input_files directory to the target directory
                 for file in os.listdir(input_files_dir):
-                    print(
-                        f"DEBUG: Processing file from zip's input_files: {file}"
-                    )  # DEBUG
+                    logger.debug("Processing file from zip's input_files: %s", file)
                     src_path = os.path.join(input_files_dir, file)
                     dst_path = os.path.join(target_input_files_dir, file)
                     if os.path.isfile(src_path):
-                        print(
-                            f"DEBUG: Attempting to copy video file: {src_path} to {dst_path}"
-                        )  # DEBUG
+                        logger.debug(
+                            "Attempting to copy video file: %s to %s",
+                            src_path,
+                            dst_path,
+                        )
                         shutil.copy2(src_path, dst_path)
-                        print(f"Copied {src_path} to {dst_path}")
-                    else:  # DEBUG
-                        print(
-                            f"DEBUG: Skipped copy, {src_path} is not a file."
-                        )  # DEBUG
-            else:  # DEBUG
-                print(
-                    f"DEBUG: Directory {input_files_dir} does not exist or is not a directory."
-                )  # DEBUG
+                        logger.debug("Copied %s to %s", src_path, dst_path)
+                    else:
+                        logger.debug("Skipped copy, %s is not a file.", src_path)
+            else:
+                logger.debug(
+                    "Directory %s does not exist or is not a directory.",
+                    input_files_dir,
+                )
 
             # Update paths in the queue.json file to reflect the new location of the images
             try:
@@ -1550,8 +1600,10 @@ class VideoJobQueue:
                     # Update paths in job_data
                     if os.path.exists(input_image_path):
                         job_data["saved_input_image_path"] = input_image_path
-                        print(
-                            f"Updated input image path for job {job_id}: {input_image_path}"
+                        logger.debug(
+                            "Updated input image path for job %s: %s",
+                            job_id,
+                            input_image_path,
                         )
                     elif "saved_input_image_path" in job_data:
                         # Fallback to updating the existing path
@@ -1559,12 +1611,16 @@ class VideoJobQueue:
                             target_queue_images_dir,
                             os.path.basename(job_data["saved_input_image_path"]),
                         )
-                        print(f"Updated existing input image path for job {job_id}")
+                        logger.debug(
+                            "Updated existing input image path for job %s", job_id
+                        )
 
                     if os.path.exists(end_frame_image_path):
                         job_data["saved_end_frame_image_path"] = end_frame_image_path
-                        print(
-                            f"Updated end frame image path for job {job_id}: {end_frame_image_path}"
+                        logger.debug(
+                            "Updated end frame image path for job %s: %s",
+                            job_id,
+                            end_frame_image_path,
                         )
                     elif "saved_end_frame_image_path" in job_data:
                         # Fallback to updating the existing path
@@ -1572,7 +1628,9 @@ class VideoJobQueue:
                             target_queue_images_dir,
                             os.path.basename(job_data["saved_end_frame_image_path"]),
                         )
-                        print(f"Updated existing end frame image path for job {job_id}")
+                        logger.debug(
+                            "Updated existing end frame image path for job %s", job_id
+                        )
 
                     # Handle video path update for job_data["input_video"]
                     current_input_video = job_data.get("input_video")
@@ -1593,8 +1651,10 @@ class VideoJobQueue:
                         job_data["input_video"] = os.path.join(
                             "input_files", os.path.basename(current_input_video)
                         )
-                        print(
-                            f"Updated video path for job {job_id} from 'input_video': {job_data['input_video']}"
+                        logger.debug(
+                            "Updated video path for job %s from 'input_video': %s",
+                            job_id,
+                            job_data["input_video"],
                         )
                     # If input_video is None, but input_image_path is a video path (for Video/Video F1 models)
                     elif (
@@ -1607,21 +1667,28 @@ class VideoJobQueue:
                         job_data["input_video"] = os.path.join(
                             "input_files", video_basename
                         )
-                        print(
-                            f"Updated video path for job {job_id} from 'input_image_path' ('{current_input_image_path}') to '{job_data['input_video']}'"
+                        logger.debug(
+                            "Updated video path for job %s from 'input_image_path' ('%s') to '%s'",
+                            job_id,
+                            current_input_image_path,
+                            job_data["input_video"],
                         )
                     elif current_input_video is None:
                         # If input_video is None and input_image_path is not a usable video path, keep input_video as None
-                        print(
-                            f"Video path for job {job_id} is None and 'input_image_path' ('{current_input_image_path}') not used for 'input_video'. 'input_video' remains None."
+                        logger.debug(
+                            "Video path for job %s is None and 'input_image_path' ('%s') not used for 'input_video'. 'input_video' remains None.",
+                            job_id,
+                            current_input_image_path,
                         )
                 # Write the updated queue.json back to the file
                 with open(queue_json_path, "w") as f:
                     json.dump(queue_data, f, indent=2)
 
-                print("Updated image paths in queue.json to reflect new location")
+                logger.debug(
+                    "Updated image paths in queue.json to reflect new location"
+                )
             except Exception as e:
-                print(f"Error updating paths in queue.json: {e}")
+                logger.error("Error updating paths in queue.json: %s", e)
 
             # Load the queue from the extracted queue.json
             loaded_count = self.load_queue_from_json(queue_json_path)
@@ -1632,10 +1699,7 @@ class VideoJobQueue:
             return loaded_count
 
         except Exception as e:
-            import traceback
-
-            print(f"Error loading queue from zip: {e}")
-            traceback.print_exc()
+            logger.exception("Error loading queue from zip: %s", e)
             # Clean up the temporary directory if it exists
             if os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir)
@@ -1665,8 +1729,10 @@ class VideoJobQueue:
 
                     # If it's a grid job, queue its children and mark it as running
                     if job.job_type == JobType.GRID:
-                        print(
-                            f"Processing grid job {job.id}, adding {len(job.child_job_ids)} child jobs to queue."
+                        logger.debug(
+                            "Processing grid job %s, adding %d child jobs to queue.",
+                            job.id,
+                            len(job.child_job_ids),
                         )
                         job.status = JobStatus.RUNNING  # Mark the grid job as running
                         job.started_at = time.time()
@@ -1693,8 +1759,9 @@ class VideoJobQueue:
                             and self.current_job
                             and self.current_job.id == job_id
                         ):
-                            print(
-                                f"Job {job_id} is already marked as running, processing it now"
+                            logger.debug(
+                                "Job %s is already marked as running, processing it now",
+                                job_id,
                             )
                             # We'll process this job now
                             pass
@@ -1714,8 +1781,9 @@ class VideoJobQueue:
 
                     # If there's a previously running job, process it first
                     if previously_running_job:
-                        print(
-                            f"Found previously running job {previously_running_job.id}, processing it first"
+                        logger.debug(
+                            "Found previously running job %s, processing it first",
+                            previously_running_job.id,
                         )
                         # Put the current job back in the queue
                         self.queue.put(job_id)
@@ -1744,8 +1812,10 @@ class VideoJobQueue:
                             )
                         )
 
-                    print(
-                        f"Starting job {job_id}, current job was {self.current_job.id if self.current_job else 'None'}"
+                    logger.debug(
+                        "Starting job %s, current job was %s",
+                        job_id,
+                        self.current_job.id if self.current_job else "None",
                     )
                     job.status = JobStatus.RUNNING
                     job.started_at = time.time()
@@ -1766,7 +1836,7 @@ class VideoJobQueue:
                     # Start the worker function with the job parameters
                     from diffusers_helper.thread_utils import async_run
 
-                    print(f"Starting worker function for job {job_id}")
+                    logger.debug("Starting worker function for job %s", job_id)
 
                     # Clean up params for the worker function
                     worker_params = job.params.copy()
@@ -1778,7 +1848,7 @@ class VideoJobQueue:
                     async_run(
                         self.worker_function, **worker_params, job_stream=job.stream
                     )
-                    print(f"Worker function started for job {job_id}")
+                    logger.debug("Worker function started for job %s", job_id)
 
                     # Process the results from the stream
                     output_filename = None
@@ -1793,8 +1863,9 @@ class VideoJobQueue:
                                 JobStatus.CANCELLED,
                                 JobStatus.CANCELLING,
                             ]:
-                                print(
-                                    f"Job {job_id} was cancelled, breaking out of processing loop"
+                                logger.debug(
+                                    "Job %s was cancelled, breaking out of processing loop",
+                                    job_id,
                                 )
                                 job_completed = True
                                 job_was_cancelled = True
@@ -1807,7 +1878,9 @@ class VideoJobQueue:
                         if (
                             current_time - last_activity_time > 60
                         ):  # 1 minute of inactivity
-                            print(f"Checking if job {job_id} is still active...")
+                            logger.debug(
+                                "Checking if job %s is still active...", job_id
+                            )
                             # Just a periodic check, don't break yet
 
                         try:
@@ -1832,7 +1905,7 @@ class VideoJobQueue:
                                     }
 
                             elif flag == "end":
-                                print(f"Received end signal for job {job_id}")
+                                logger.debug("Received end signal for job %s", job_id)
                                 # Check if job was cancelled when end signal was received
                                 with self.lock:
                                     if job.status in [
@@ -1840,8 +1913,9 @@ class VideoJobQueue:
                                         JobStatus.CANCELLING,
                                     ]:
                                         job_was_cancelled = True
-                                        print(
-                                            f"Job {job_id} end signal received due to cancellation"
+                                        logger.debug(
+                                            "Job %s end signal received due to cancellation",
+                                            job_id,
                                         )
                                 job_completed = True
                                 break
@@ -1851,22 +1925,19 @@ class VideoJobQueue:
                             time.sleep(0.1)
                             continue
                         except Exception as e:
-                            print(f"Error processing job output: {e}")
+                            logger.error("Error processing job output: %s", e)
                             # Wait a bit before trying again
                             time.sleep(0.1)
                             continue
                 except Exception as e:
-                    import traceback
-
-                    traceback.print_exc()
-                    print(f"Error processing job {job_id}: {e}")
+                    logger.exception("Error processing job %s: %s", job_id, e)
                     with self.lock:
                         # Check if job was cancelled before the exception occurred
                         if job.status in [JobStatus.CANCELLED, JobStatus.CANCELLING]:
                             job_was_cancelled = True
                             job.status = JobStatus.CANCELLED
-                            print(
-                                f"Job {job_id} was cancelled before exception occurred"
+                            logger.debug(
+                                "Job %s was cancelled before exception occurred", job_id
                             )
                         else:
                             job.status = JobStatus.FAILED
@@ -1882,8 +1953,9 @@ class VideoJobQueue:
                                 if job_was_cancelled:
                                     # Job was cancelled but status is still RUNNING - mark as CANCELLED
                                     job.status = JobStatus.CANCELLED
-                                    print(
-                                        f"Job {job_id} was cancelled but status was still RUNNING, correcting to CANCELLED"
+                                    logger.debug(
+                                        "Job %s was cancelled but status was still RUNNING, correcting to CANCELLED",
+                                        job_id,
                                     )
                                 else:
                                     # Job completed normally
@@ -1903,7 +1975,7 @@ class VideoJobQueue:
                             if not job.completed_at:
                                 job.completed_at = time.time()
 
-                    print(f"Finishing job {job_id} with status {job.status}")
+                    logger.debug("Finishing job %s with status %s", job_id, job.status)
                     self.is_processing = False
 
                     # Check if there's another job in the queue before setting current_job to None
@@ -1925,7 +1997,7 @@ class VideoJobQueue:
                             for item in temp_queue:
                                 self.queue.put(item)
                     except Exception as e:
-                        print(f"Error checking for next job: {e}")
+                        logger.error("Error checking for next job: %s", e)
 
                     # After a job completes or is cancelled, always set current_job to None
                     self.current_job = None
@@ -1939,13 +2011,12 @@ class VideoJobQueue:
                     try:
                         self.save_queue_to_json()
                     except Exception as e:
-                        print(f"Error saving queue to JSON after job completion: {e}")
+                        logger.error(
+                            "Error saving queue to JSON after job completion: %s", e
+                        )
 
             except Exception as e:
-                import traceback
-
-                traceback.print_exc()
-                print(f"Error in worker loop: {e}")
+                logger.exception("Error in worker loop: %s", e)
 
                 # Make sure we reset processing state if there was an error
                 with self.lock:
@@ -1975,7 +2046,9 @@ class VideoJobQueue:
                 ]
 
                 if not all(child_jobs):
-                    print(f"Warning: Some child jobs for grid {grid_job.id} not found.")
+                    logger.warning(
+                        "Some child jobs for grid %s not found.", grid_job.id
+                    )
                     continue
 
                 all_children_done = all(
@@ -1985,8 +2058,9 @@ class VideoJobQueue:
                 )
 
                 if all_children_done:
-                    print(
-                        f"All child jobs for grid {grid_job.id} are done. Assembling grid."
+                    logger.info(
+                        "All child jobs for grid %s are done. Assembling grid.",
+                        grid_job.id,
                     )
                     # Logic to assemble the grid
                     # This is a placeholder for the actual grid assembly logic
@@ -2000,8 +2074,9 @@ class VideoJobQueue:
                     ]
 
                     if not child_results:
-                        print(
-                            f"Grid job {grid_job.id} failed because no child jobs completed successfully."
+                        logger.error(
+                            "Grid job %s failed because no child jobs completed successfully.",
+                            grid_job.id,
                         )
                         grid_job.status = JobStatus.FAILED
                         grid_job.error = "No child jobs completed successfully."
@@ -2024,12 +2099,16 @@ class VideoJobQueue:
 
                         grid_job.result = grid_filename
                         grid_job.status = JobStatus.COMPLETED
-                        print(
-                            f"Grid assembly for job {grid_job.id} complete. Result saved to {grid_filename}"
+                        logger.info(
+                            "Grid assembly for job %s complete. Result saved to %s",
+                            grid_job.id,
+                            grid_filename,
                         )
 
                     except Exception as e:
-                        print(f"Error during grid assembly for job {grid_job.id}: {e}")
+                        logger.error(
+                            "Error during grid assembly for job %s: %s", grid_job.id, e
+                        )
                         grid_job.status = JobStatus.FAILED
                         grid_job.error = f"Grid assembly failed: {e}"
 

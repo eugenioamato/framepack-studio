@@ -1,6 +1,9 @@
+import logging
 import re
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer, StoppingCriteria
+
+logger = logging.getLogger(__name__)
 
 
 # --- Job State ---
@@ -57,12 +60,12 @@ def _load_enhancing_model():
     """Loads the model and tokenizer, caching them globally."""
     global model, tokenizer
     if model is None or tokenizer is None:
-        print(f"LLM Enhancer: Loading model '{MODEL_NAME}' to {DEVICE}...")
+        logger.info(f"LLM Enhancer: Loading model '{MODEL_NAME}' to {DEVICE}...")
         tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
         model = AutoModelForCausalLM.from_pretrained(
             MODEL_NAME, torch_dtype="auto", device_map="auto"
         )
-        print("LLM Enhancer: Model loaded successfully.")
+        logger.info("LLM Enhancer: Model loaded successfully.")
 
 
 def _load_enhancing_model_with_progress():
@@ -238,11 +241,11 @@ def enhance_prompt(prompt_text: str) -> str:
 
         if not matches:
             # No timestamps found, enhance the whole prompt
-            print("LLM Enhancer: Enhancing a simple prompt.")
+            logger.debug("LLM Enhancer: Enhancing a simple prompt.")
             result = _run_inference(prompt_text)
         else:
             # Timestamps found, enhance each section's text
-            print(
+            logger.debug(
                 f"LLM Enhancer: Enhancing {len(matches)} sections in a timestamped prompt."
             )
             enhanced_parts = []

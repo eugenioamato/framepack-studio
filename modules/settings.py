@@ -1,9 +1,12 @@
 import json
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional
 import os
 
 from shared import LoraLoader, QuantizationFormat
+
+logger = logging.getLogger(__name__)
 
 
 class Settings:
@@ -52,7 +55,7 @@ Enhanced prompt:""",
 
     def __new__(cls):
         if cls._instance is None:
-            print("Creating the Settings instance")
+            logger.debug("Creating the Settings instance")
             cls._instance = super(Settings, cls).__new__(cls)
         return cls._instance
 
@@ -101,7 +104,7 @@ Enhanced prompt:""",
                     settings.update(loaded_settings)
                     return settings
             except Exception as e:
-                print(f"Error loading settings: {e}")
+                logger.error(f"Error loading settings: {e}")
                 return self.default_settings.copy()
         return self.default_settings.copy()
 

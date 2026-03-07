@@ -660,7 +660,7 @@ def connect_generate_events(g, s, q, f):
         )
         new_seed_value = random.randint(0, 21474) if randomize_seed_arg else None
         if new_seed_value:
-            logging.info(f"Generated new seed for next job: {new_seed_value}")
+            logging.debug(f"Generated new seed for next job: {new_seed_value}")
         start_button_update_after_add = gr.update(value="🚀 Add to Queue")
         if result and result[1]:
             job_id = result[1]

@@ -1,7 +1,10 @@
+import logging
 import torch
 from PIL import Image
 import numpy as np
 from transformers import AutoProcessor, AutoModelForCausalLM, StoppingCriteria
+
+logger = logging.getLogger(__name__)
 
 
 # --- Job State ---
@@ -34,7 +37,7 @@ def _load_captioning_model():
     """Load the Florence-2"""
     global model, processor
     if model is None or processor is None:
-        print("Loading Florence-2 model for image captioning...")
+        logger.info("Loading Florence-2 model for image captioning...")
         model = AutoModelForCausalLM.from_pretrained(
             "microsoft/Florence-2-large",
             torch_dtype=torch_dtype,
@@ -44,7 +47,7 @@ def _load_captioning_model():
         processor = AutoProcessor.from_pretrained(
             "microsoft/Florence-2-large", trust_remote_code=True
         )
-        print("Florence-2 model loaded successfully.")
+        logger.info("Florence-2 model loaded successfully.")
 
 
 def stop_captioning():
@@ -74,7 +77,7 @@ def unload_captioning_model():
         del processor
         processor = None
     torch.cuda.empty_cache()
-    print("Florence-2 model unloaded successfully.")
+    logger.info("Florence-2 model unloaded successfully.")
 
 
 prompt = "<MORE_DETAILED_CAPTION>"

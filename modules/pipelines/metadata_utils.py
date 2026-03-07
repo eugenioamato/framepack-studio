@@ -3,14 +3,16 @@ Metadata utilities for FramePack Studio.
 This module provides functions for generating and saving metadata.
 """
 
+import logging
 import os
 import time
-import traceback  # Moved to top
 import numpy as np  # Added
 from PIL import Image, ImageDraw, ImageFont
 from PIL.PngImagePlugin import PngInfo
 
 from modules.version import APP_VERSION
+
+logger = logging.getLogger(__name__)
 
 
 def get_placeholder_color(model_type):
@@ -48,7 +50,7 @@ def save_job_start_image(job_params, job_id, settings):
     metadata_dir_path = job_params.get("metadata_dir") or settings.get("metadata_dir")
 
     if not output_dir_path:
-        print(
+        logger.error(
             "[JOB_START_IMG_ERROR] No output directory found in job_params or settings"
         )
         return False
@@ -72,7 +74,7 @@ def save_job_start_image(job_params, job_id, settings):
 
             json.dump(metadata_dict, f, indent=2)
     except Exception:
-        traceback.print_exc()
+        logger.exception("Error saving JSON metadata")
 
     # Save the input image if it's a numpy array
     if actual_input_image_np is not None and isinstance(
@@ -120,7 +122,7 @@ def save_job_start_image(job_params, job_id, settings):
             start_image_pil.save(actual_start_image_target_path, pnginfo=png_metadata)
             return True  # Indicate success
         except Exception:
-            traceback.print_exc()
+            logger.exception("Error saving job start image")
     return False  # Indicate failure or inability to save
 
 
@@ -302,7 +304,7 @@ def create_metadata(job_params, job_id, settings, save_placeholder=False):
                 lora_data[lora_name] = weight_value
             except Exception:
                 lora_data[lora_name] = 1.0
-                traceback.print_exc()
+                logger.exception("Error processing LoRA metadata")
 
         metadata_dict["loras"] = lora_data
     else:
@@ -321,7 +323,7 @@ def create_metadata(job_params, job_id, settings, save_placeholder=False):
         try:
             placeholder_img.save(placeholder_target_path, pnginfo=metadata)
         except Exception:
-            traceback.print_exc()
+            logger.exception("Error saving placeholder image")
 
     return metadata_dict
 
@@ -333,7 +335,7 @@ def save_last_video_frame(job_params, job_id, settings, last_frame_np):
     output_dir_path = job_params.get("output_dir") or settings.get("output_dir")
 
     if not output_dir_path:
-        print("[SAVE_LAST_FRAME_ERROR] No output directory found.")
+        logger.error("[SAVE_LAST_FRAME_ERROR] No output directory found.")
         return False
 
     os.makedirs(output_dir_path, exist_ok=True)
@@ -374,8 +376,10 @@ def save_last_video_frame(job_params, job_id, settings, last_frame_np):
 
             last_frame_pil = Image.fromarray(image_to_save_np)
             last_frame_pil.save(last_frame_path, pnginfo=png_metadata)
-            print(f"Saved last video frame for job {job_id} to {last_frame_path}")
+            logger.debug(
+                f"Saved last video frame for job {job_id} to {last_frame_path}"
+            )
             return True
         except Exception:
-            traceback.print_exc()
+            logger.exception("Error saving last video frame")
     return False

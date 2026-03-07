@@ -1,5 +1,6 @@
 import gc
 import json  # for preset loading/saving
+import logging
 import os
 import psutil
 import sys
@@ -14,8 +15,8 @@ if __name__ == "__main__":
     modules_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(modules_dir)
     if project_root not in sys.path:
-        print("--- Running Toolbox in Standalone Mode ---")
-        print(f"Adding project root to sys.path: {project_root}")
+        logging.info("--- Running Toolbox in Standalone Mode ---")
+        logging.info(f"Adding project root to sys.path: {project_root}")
         sys.path.insert(0, project_root)
 
     # Set the GRADIO_TEMP_DIR *before* Gradio is imported.
@@ -26,7 +27,7 @@ if __name__ == "__main__":
     _gradio_temp_dir = _settings_for_env.get("gradio_temp_dir")
     if _gradio_temp_dir:
         os.environ["GRADIO_TEMP_DIR"] = os.path.abspath(_gradio_temp_dir)
-        print(
+        logging.info(
             f"Set GRADIO_TEMP_DIR for standalone mode: {os.environ['GRADIO_TEMP_DIR']}"
         )
     del _settings_for_env, _gradio_temp_dir
@@ -57,12 +58,12 @@ if __name__ == "__main__":
             )
 
 # --- Third-Party Library Imports ---
-import gradio as gr
-import imageio  # Added for reading frame dimensions
-import torch
+import gradio as gr  # noqa: E402
+import imageio  # noqa: E402
+import torch  # noqa: E402
 
 # ruff: noqa: I001
-from torchvision.transforms.functional import rgb_to_grayscale
+from torchvision.transforms.functional import rgb_to_grayscale  # noqa: E402
 
 # --- Patch for basicsr (must run after torchvision import) ---
 functional_tensor_mod = types.ModuleType("functional_tensor")
@@ -81,11 +82,13 @@ from modules.generators.base_generator import BaseModelGenerator  # noqa: E402
 from modules.studio_manager import StudioManager  # noqa: E402
 from modules.video_queue import JobStatus  # noqa: E402
 
+logger = logging.getLogger(__name__)
+
 # Attempt to import helper, with a fallback if it's missing.
 try:
     from diffusers_helper.memory import cpu
 except ImportError:
-    print(
+    logger.error(
         "WARNING: Could not import cpu from diffusers_helper.memory. Falling back to torch.device('cpu')"
     )
     cpu = torch.device("cpu")
@@ -100,7 +103,7 @@ ffmpeg_full_path = os.path.join(bin_dir, ffmpeg_exe_name)
 
 # Check if the executable exists at the correct location.
 if not os.path.exists(ffmpeg_full_path):
-    print(f"Bundled FFmpeg not found in '{bin_dir}'. Running one-time setup...")
+    logger.info(f"Bundled FFmpeg not found in '{bin_dir}'. Running one-time setup...")
     setup_ffmpeg()
 
 studio_manager = StudioManager()  # Get the StudioManager instance
@@ -1262,24 +1265,24 @@ def tb_handle_delete_studio_transformer():
     tb_message_mgr.add_message(
         "Attempting to directly access and delete Studio transformer..."
     )
-    print("Attempting to directly access and delete Studio transformer...")
+    logger.info("Attempting to directly access and delete Studio transformer...")
     log_messages_from_action = []
 
     studio_module_instance = None
     if "__main__" in sys.modules:
         # __main__ will always exist
         studio_module_instance = sys.modules["__main__"]
-        print("Found studio context in __main__.")
+        logger.info("Found studio context in __main__.")
     elif "studio" in sys.modules:
         studio_module_instance = sys.modules["studio"]
-        print("Found studio context in sys.modules['studio'].")
+        logger.info("Found studio context in sys.modules['studio'].")
 
     # Ensure any existing LoRAs are unloaded from the current generator
     if (
         studio_manager.current_generator is None
         or studio_manager.current_generator.transformer is None
     ):
-        print("ERROR: Current transformer is None.")
+        logger.error("Current transformer is None.")
         tb_message_mgr.add_message(
             "ERROR: Current transformer is None. Nothing to delete."
         )
@@ -1287,7 +1290,7 @@ def tb_handle_delete_studio_transformer():
         return tb_update_messages()
 
     if studio_module_instance is None:
-        print("ERROR: Could not find the 'studio' module's active context.")
+        logger.error("Could not find the 'studio' module's active context.")
         tb_message_mgr.add_message(
             "ERROR: Could not find the 'studio' module's active context in sys.modules."
         )
@@ -1313,14 +1316,16 @@ def tb_handle_delete_studio_transformer():
             tb_message_mgr.add_message(
                 "Please wait for the current job to complete or cancel it first using the main interface."
             )
-            print("Cannot unload model: A job is currently running in the queue.")
+            logger.error(
+                "Cannot unload model: A job is currently running in the queue."
+            )
             return tb_update_messages()
 
     # should be able to remove the getattr() call here, since we are directly accessing the studio_manager
     generator_object_to_delete = studio_manager.current_generator or getattr(
         studio_module_instance, "current_generator", None
     )
-    print(
+    logger.info(
         f"Direct access: generator_object_to_delete is {type(generator_object_to_delete)}, id: {id(generator_object_to_delete)}"
     )
 
@@ -1351,17 +1356,19 @@ def tb_handle_delete_studio_transformer():
         log_messages_from_action.append(
             f" Found active generator: {model_name_str}. Preparing for deletion."
         )
-        print(f"Found active generator: {model_name_str}. Preparing for deletion.")
+        logger.info(
+            f"Found active generator: {model_name_str}. Preparing for deletion."
+        )
 
         try:
             if isinstance(generator_object_to_delete, BaseModelGenerator):
-                print("   - LoRAs: Unloading from transformer...")
+                logger.debug("   - LoRAs: Unloading from transformer...")
                 generator_object_to_delete.unload_loras()
             # No need for attribute acrobatics here
             elif hasattr(generator_object_to_delete, "unload_loras") and callable(
                 generator_object_to_delete.unload_loras
             ):
-                print("   - LoRAs: Unloading from transformer...")
+                logger.debug("   - LoRAs: Unloading from transformer...")
                 generator_object_to_delete.unload_loras()
             else:
                 log_messages_from_action.append(
@@ -1374,31 +1381,31 @@ def tb_handle_delete_studio_transformer():
             ):
                 transformer_object_ref = generator_object_to_delete.transformer
                 transformer_name_for_log = transformer_object_ref.__class__.__name__
-                print(
+                logger.debug(
                     f"   - Transformer ({transformer_name_for_log}): Preparing for memory operations."
                 )
                 if transformer_object_ref.device != cpu:
-                    print(
+                    logger.debug(
                         f"   - Transformer ({transformer_name_for_log}): Moving to CPU..."
                     )
                     transformer_object_ref.to(cpu)  # type: ignore
                     log_messages_from_action.append("    - Transformer moved to CPU.")
-                    print(
+                    logger.debug(
                         f"   - Transformer ({transformer_name_for_log}): Moved to CPU."
                     )
                 else:
                     log_messages_from_action.append("    - Transformer already on CPU.")
-                    print(
+                    logger.debug(
                         f"   - Transformer ({transformer_name_for_log}): Already on CPU."
                     )
 
-                print(
+                logger.debug(
                     f"   - Transformer ({transformer_name_for_log}): Removing attribute from generator..."
                 )
                 generator_object_to_delete.transformer = None  # type: ignore
                 del transformer_object_ref
                 log_messages_from_action.append("    - Transformer reference deleted.")
-                print(
+                logger.debug(
                     f"   - Transformer ({transformer_name_for_log}): Reference deleted."
                 )
 
@@ -1409,7 +1416,7 @@ def tb_handle_delete_studio_transformer():
             ):
                 transformer_object_ref = generator_object_to_delete.transformer
                 transformer_name_for_log = transformer_object_ref.__class__.__name__
-                print(
+                logger.debug(
                     f"   - Transformer ({transformer_name_for_log}): Preparing for memory operations."
                 )
 
@@ -1421,25 +1428,25 @@ def tb_handle_delete_studio_transformer():
                         transformer_object_ref.to
                     ):
                         try:
-                            print(
+                            logger.debug(
                                 f"   - Transformer ({transformer_name_for_log}): Moving to CPU..."
                             )
                             transformer_object_ref.to(cpu)
                             log_messages_from_action.append(
                                 "    - Transformer moved to CPU."
                             )
-                            print(
+                            logger.debug(
                                 f"   - Transformer ({transformer_name_for_log}): Moved to CPU."
                             )
                         except Exception as e_cpu:
                             error_msg_cpu = f"    - Transformer ({transformer_name_for_log}): Move to CPU FAILED: {e_cpu}"
                             log_messages_from_action.append(error_msg_cpu)
-                            print(error_msg_cpu)
+                            logger.error(error_msg_cpu)
                     else:
                         log_messages_from_action.append(
                             f"    - Transformer ({transformer_name_for_log}): Cannot move to CPU, 'to' method not found."
                         )
-                        print(
+                        logger.debug(
                             f"   - Transformer ({transformer_name_for_log}): Cannot move to CPU, 'to' method not found."
                         )
                 elif (
@@ -1447,37 +1454,37 @@ def tb_handle_delete_studio_transformer():
                     and transformer_object_ref.device == cpu
                 ):
                     log_messages_from_action.append("    - Transformer already on CPU.")
-                    print(
+                    logger.debug(
                         f"   - Transformer ({transformer_name_for_log}): Already on CPU."
                     )
                 else:
                     log_messages_from_action.append(
                         "    - Transformer: Could not determine device or move to CPU."
                     )
-                    print(
+                    logger.debug(
                         f"   - Transformer ({transformer_name_for_log}): Could not determine device or move to CPU."
                     )
 
-                print(
+                logger.debug(
                     f"   - Transformer ({transformer_name_for_log}): Removing attribute from generator..."
                 )
                 generator_object_to_delete.transformer = None
-                print(
+                logger.debug(
                     f"   - Transformer ({transformer_name_for_log}): Deleting Python reference..."
                 )
                 del transformer_object_ref
                 log_messages_from_action.append("    - Transformer reference deleted.")
-                print(
+                logger.debug(
                     f"   - Transformer ({transformer_name_for_log}): Reference deleted."
                 )
             else:
                 log_messages_from_action.append(
                     "    - Transformer: Not found or already unloaded."
                 )
-                print("   - Transformer: Not found or already unloaded.")
+                logger.debug("   - Transformer: Not found or already unloaded.")
 
             generator_class_name_for_log = generator_object_to_delete.__class__.__name__
-            print(
+            logger.info(
                 f"   - Model Generator ({generator_class_name_for_log}): Setting global reference to None..."
             )
             if studio_manager.current_generator is not None:
@@ -1485,7 +1492,7 @@ def tb_handle_delete_studio_transformer():
                 log_messages_from_action.append(
                     "    - 'current_generator' in studio manager set to None."
                 )
-                print(
+                logger.info(
                     "   - Global 'current_generator' in studio manager successfully set to None."
                 )
             else:
@@ -1493,24 +1500,26 @@ def tb_handle_delete_studio_transformer():
                 log_messages_from_action.append(
                     "    - 'current_generator' in studio module set to None."
                 )
-                print(
+                logger.info(
                     "   - Global 'current_generator' in studio module successfully set to None."
                 )
 
-            print(
+            logger.info(
                 f"   - Model Generator ({generator_class_name_for_log}): Deleting local Python reference..."
             )
             del generator_object_to_delete
-            print(
+            logger.info(
                 f"   - Model Generator ({generator_class_name_for_log}): Python reference deleted."
             )
 
-            print("   - System: Performing garbage collection and CUDA cache clearing.")
+            logger.debug(
+                "   - System: Performing garbage collection and CUDA cache clearing."
+            )
             gc.collect()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
             log_messages_from_action.append("    - GC and CUDA cache cleared.")
-            print("   - System: GC and CUDA cache clear completed.")
+            logger.debug("   - System: GC and CUDA cache clear completed.")
 
             log_messages_from_action.append(
                 f"✅ Deletion of '{model_name_str}' completed successfully from toolbox."
@@ -1522,12 +1531,12 @@ def tb_handle_delete_studio_transformer():
         except Exception as e_del:
             error_msg_del = f"Error during deletion process: {e_del}"
             log_messages_from_action.append(f"    - {error_msg_del}")
-            print(f"   - {error_msg_del}")
+            logger.error(f"   - {error_msg_del}")
             traceback.print_exc()
             tb_message_mgr.add_error(f"Deletion Error: {e_del}")
     else:
         tb_message_mgr.add_message("ℹ️ No active generator found. Nothing to delete.")
-        print("No active generator found via direct access. Nothing to delete.")
+        logger.info("No active generator found via direct access. Nothing to delete.")
 
     for msg_item in log_messages_from_action:
         tb_message_mgr.add_message(msg_item)
@@ -1650,7 +1659,7 @@ def tb_get_formatted_toolbar_stats():
                 gpu_load_pct = int(round(load))
                 gpu_value_str = f"{temp:.0f}°C {gpu_load_pct}%"
     except Exception as e:
-        print(
+        logger.error(
             f"Error getting system stats values for toolbar (from toolbox_app.py): {e}"
         )
 
@@ -2845,7 +2854,7 @@ if __name__ == "__main__":
         # 3. Get the output directory path from the existing settings instance
         output_dir_from_settings = settings_instance.get("output_dir")
         allowed_paths = [output_dir_from_settings]
-        print(
+        logger.info(
             f"Gradio server will be allowed to access path: {output_dir_from_settings}"
         )
 
@@ -2859,7 +2868,7 @@ if __name__ == "__main__":
             )
 
             tb_create_video_toolbox_ui()
-        print(
+        logger.info(
             f"Launching Toolbox server. Access it at http://{args.server}:{args.port if args.port else 7860}"
         )
         block.launch(
