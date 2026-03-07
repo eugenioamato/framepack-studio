@@ -25,7 +25,6 @@ from modules.ui.queue import (
 )
 from modules.ui.outputs import create_outputs_ui, connect_outputs_events
 from modules.ui.settings import create_settings_ui, connect_settings_events
-from modules.ui.audio import create_audio_ui, connect_audio_events
 
 logger = logging.getLogger(__name__)
 logger.info("Interface module loaded.")
@@ -203,9 +202,6 @@ def create_interface(
             with gr.Tab("Post-processing", id="toolbox_tab"):
                 toolbox_ui_layout, tb_target_video_input = tb_create_video_toolbox_ui()
 
-            with gr.Tab("Audio", id="audio_tab"):
-                a = create_audio_ui(settings)
-
             with gr.Tab("Settings", id="settings_tab"):
                 s = create_settings_ui(
                     settings, get_latents_display_top, g["model_type"].choices
@@ -332,8 +328,6 @@ def create_interface(
         connect_settings_events(
             s, g, settings, create_latents_layout_update, tb_processor
         )
-        connect_audio_events(a, settings)
-
         def refresh_loras(current_selected):
             if enumerate_lora_dir_fn:
                 new_lora_names = enumerate_lora_dir_fn()

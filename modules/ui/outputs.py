@@ -5,9 +5,11 @@ import os
 import json
 import logging
 
-from modules.ui.audio import _ensure_mmaudio_on_path
+import sys as _sys
 
-_ensure_mmaudio_on_path()
+_mmaudio_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "MMAudio"))
+if _mmaudio_root not in _sys.path:
+    _sys.path.insert(0, _mmaudio_root)
 
 from mmaudio.eval_utils import all_model_cfg  # noqa: E402
 
