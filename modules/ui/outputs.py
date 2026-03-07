@@ -7,7 +7,9 @@ import logging
 
 import sys as _sys
 
-_mmaudio_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "MMAudio"))
+_mmaudio_root = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "MMAudio")
+)
 if _mmaudio_root not in _sys.path:
     _sys.path.insert(0, _mmaudio_root)
 

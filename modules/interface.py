@@ -328,6 +328,7 @@ def create_interface(
         connect_settings_events(
             s, g, settings, create_latents_layout_update, tb_processor
         )
+
         def refresh_loras(current_selected):
             if enumerate_lora_dir_fn:
                 new_lora_names = enumerate_lora_dir_fn()
