@@ -32,11 +32,11 @@ from diffusers_helper.bucket_tools import find_nearest_bucket
 from modules.pipelines.metadata_utils import create_metadata
 from modules import DUMMY_LORA_NAME # Import the constant
 
-from modules.toolbox_app import tb_processor
-from modules.toolbox_app import tb_create_video_toolbox_ui, tb_get_formatted_toolbar_stats
+from modules.toolbox_app import tb_processor, tb_create_video_toolbox_ui, tb_get_formatted_toolbar_stats
 from modules.xy_plot_ui import create_xy_plot_ui, xy_plot_process
 
 # Define the dummy LoRA name as a constant
+DUMMY_LORA_NAME = "Dummy LoRA"
 
 def create_interface(
     process_fn,
@@ -48,7 +48,8 @@ def create_interface(
     settings,
     default_prompt: str = '[1s: The person waves hello] [3s: The person jumps up and down] [5s: The person does a dance]',
     lora_names: list = [],
-    lora_values: list = []
+    lora_values: list = [],
+    latest_completed_fn=None
 ):
     """
     Create the Gradio interface for the video generation application
@@ -332,6 +333,17 @@ def create_interface(
         max-height: 600px; /* Set your desired fixed height */
         overflow-y: auto;   /* Add a scrollbar only when needed */
     }
+    /* Completed video at top: full width, contained height */
+    .completed-video-row {
+        width: 100%;
+        margin-bottom: 8px;
+    }
+    .completed-video video {
+        width: 100% !important;
+        max-height: 80vh !important;
+        height: 80vh !important;
+        object-fit: contain !important;
+    }
     #toolbox-start-pipeline-btn {
         margin-top: -14px !important; /* Adjust this value to get the perfect alignment */
     }
@@ -404,6 +416,20 @@ def create_interface(
             # Removed old version_display column
             # --- End of Toolbar ---
             
+        # Top-level completed video display (full width, capped height)
+        with gr.Row(elem_classes="completed-video-row"):
+            with gr.Column(scale=1):
+                completed_video = gr.Video(
+                    label="Latest Completed Video",
+                    autoplay=True,
+                    show_share_button=False,
+                    height=720,
+                    loop=True,
+                    elem_id="completed-video-player",
+                    elem_classes=["completed-video"]
+                )
+                last_completed_video_state = gr.State(value=None)
+
         # Essential to capture main_tabs_component for later use by send_to_toolbox_btn
         with gr.Tabs(elem_id="main_tabs") as main_tabs_component:
             with gr.Tab("Generate", id="generate_tab"):
@@ -674,7 +700,87 @@ def create_interface(
                             elem_classes="contain-image",
                             image_mode="RGB"
                         )
-                        result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=256, loop=True)
+                        result_video = gr.Video(label="Finished Frames", autoplay=True, show_share_button=False, height=256, loop=True, elem_id="result-video-player")
+                        fullscreen_helper = gr.HTML(
+                            """
+                            <script>
+                            (() => {
+                                const containerId = "result-video-player";
+                                const state = { video: null, observer: null, wantFullscreen: false, reapplyTimer: null };
+
+                                const requestFull = () => {
+                                    const container = document.getElementById(containerId);
+                                    const video = container ? container.querySelector("video") : null;
+                                    if (!container) return;
+                                    if (document.fullscreenElement && document.fullscreenElement !== container && document.fullscreenElement !== video) {
+                                        // Already fullscreen on something else
+                                        return;
+                                    }
+                                    const target = video || container;
+                                    target?.requestFullscreen?.().catch(() => {});
+                                };
+
+                                const scheduleReapply = (delay = 50) => {
+                                    if (!state.wantFullscreen) return;
+                                    clearTimeout(state.reapplyTimer);
+                                    state.reapplyTimer = setTimeout(requestFull, delay);
+                                };
+
+                                const rememberFullscreen = () => {
+                                    const fsEl = document.fullscreenElement;
+                                    const container = document.getElementById(containerId);
+                                    state.wantFullscreen = !!(fsEl && container && fsEl.contains(fsEl));
+                                };
+
+                                const watchVideo = () => {
+                                    const video = document.querySelector(`#${containerId} video`);
+                                    if (!video || state.video === video) return;
+                                    state.video = video;
+
+                                    if (state.observer) state.observer.disconnect();
+                                    state.observer = new MutationObserver((mutations) => {
+                                        for (const m of mutations) {
+                                            if (m.type === "attributes" && m.attributeName === "src") {
+                                                scheduleReapply(80);
+                                            }
+                                        }
+                                    });
+                                    state.observer.observe(video, { attributes: true, attributeFilter: ["src"] });
+
+                                    video.addEventListener("loadeddata", () => scheduleReapply(20));
+                                };
+
+                                document.addEventListener("fullscreenchange", () => {
+                                    rememberFullscreen();
+                                    if (state.wantFullscreen) scheduleReapply(10);
+                                });
+
+                                const bootstrap = () => {
+                                    const container = document.getElementById(containerId);
+                                    if (!container) {
+                                        requestAnimationFrame(bootstrap);
+                                        return;
+                                    }
+                                    new MutationObserver(() => {
+                                        watchVideo();
+                                        scheduleReapply(30);
+                                    }).observe(container, { childList: true, subtree: true });
+
+                                    // Capture a user gesture to mark intent and immediately request fullscreen
+                                    container.addEventListener("click", () => {
+                                        state.wantFullscreen = true;
+                                        scheduleReapply(0);
+                                    }, true);
+
+                                    watchVideo();
+                                };
+
+                                bootstrap();
+                            })();
+                            </script>
+                            """,
+                            visible=False
+                        )
                         progress_desc = gr.Markdown('', elem_classes='no-generating-animation')
                         progress_bar = gr.HTML('', elem_classes='no-generating-animation')
                         with gr.Row():
@@ -1227,6 +1333,9 @@ def create_interface(
 
         # --- Connect Monitoring ---
         # Auto-check for current job on page load and job change
+        # Track the last successfully displayed video so we don't blank the player between jobs
+        last_result_video = {"value": None}
+
         def check_for_current_job():
             # This function will be called when the interface loads
             # It will check if there's a current job in the queue and update the UI
@@ -1235,7 +1344,9 @@ def create_interface(
                 if current_job:
                     # Return all the necessary information to update the preview windows
                     job_id = current_job.id
-                    result = current_job.result
+                    result = current_job.result or last_result_video["value"]
+                    if current_job.result:
+                        last_result_video["value"] = current_job.result
                     preview = current_job.progress_data.get('preview') if current_job.progress_data else None
                     desc = current_job.progress_data.get('desc', '') if current_job.progress_data else ''
                     html = current_job.progress_data.get('html', '') if current_job.progress_data else ''
@@ -1243,7 +1354,8 @@ def create_interface(
                     # Also trigger the monitor_job function to start monitoring this job
                     print(f"Auto-check found current job {job_id}, triggering monitor_job")
                     return job_id, result, preview, preview, desc, html
-                return None, None, None, None, '', ''
+                # No active job: keep showing the last result video (if any) so the player doesn't go black
+                return None, gr.update(value=last_result_video["value"]), None, None, '', ''
                 
         # Auto-check for current job on page load and handle handoff between jobs.
         def check_for_current_job_and_monitor():
@@ -1568,6 +1680,22 @@ def create_interface(
             fn=create_latents_layout_update,
             inputs=None,
             outputs=[top_preview_row, preview_image]
+        )
+
+        # --- Latest Completed Video updater (polling) ---
+        def refresh_completed_video(last_value):
+            if latest_completed_fn is None:
+                return gr.update(), last_value
+            latest_value = latest_completed_fn()
+            if latest_value and latest_value != last_value:
+                return latest_value, latest_value
+            return gr.update(), last_value
+
+        completed_video_timer = gr.Timer(1.0, active=True)
+        completed_video_timer.tick(
+            fn=refresh_completed_video,
+            inputs=[last_completed_video_state],
+            outputs=[completed_video, last_completed_video_state]
         )
 
         # --- START OF REFACTORED XY PLOT EVENT WIRING ---

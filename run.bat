@@ -8,9 +8,9 @@ if %errorlevel% neq 0 (
     goto end
 )
 
-if exist "%cd%/venv/Scripts/python.exe" (
+if exist "%cd%/venv_py312/Scripts/python.exe" (
 
-"%cd%/venv/Scripts/python.exe" studio.py
+"%cd%/venv_py312/Scripts/python.exe" studio.py --inbrowser
 
 ) else (
 

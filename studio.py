@@ -1,3 +1,10 @@
+import io
+import sys
+import codecs
+# Set stdout to UTF-8
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
 from diffusers_helper.hf_login import login
 
 import json
@@ -237,6 +244,8 @@ else:
 # Create job queue
 job_queue = VideoJobQueue()
 
+# Track last successfully produced video to keep player populated between jobs
+LAST_RESULT_VIDEO = None
 
 
 # Function to load a LoRA file
@@ -533,7 +542,8 @@ def monitor_job(job_id=None):
     If no job_id is provided, check if there's a current job in the queue.
     ALWAYS shows the current running job, regardless of the job_id provided.
     """
-    last_video = None  # Track the last video file shown
+    global LAST_RESULT_VIDEO
+    last_video = LAST_RESULT_VIDEO  # Track the last video file shown
     last_job_status = None  # Track the previous job status to detect status changes
     last_progress_update_time = time.time()  # Track when we last updated the progress
     last_preview = None  # Track the last preview image shown
@@ -594,12 +604,13 @@ def monitor_job(job_id=None):
         if not job:
             # Correctly yield 7 items for the startup/no-job case
             # This ensures the status text goes to the right component and the buttons are set correctly.
-            yield None, None, None, 'No job ID provided', '', gr.update(value="🚀 Add to Queue", interactive=True, visible=True), gr.update(interactive=False, visible=False)
+            yield last_video, None, None, 'No job ID provided', '', gr.update(value="🚀 Add to Queue", interactive=True, visible=True), gr.update(interactive=False, visible=False)
             return
 
         # If a new video file is available, yield it immediately
         if job.result and job.result != last_video:
             last_video = job.result
+            LAST_RESULT_VIDEO = job.result
             # You can also update preview/progress here if desired
             right_preview, top_preview = get_preview_updates(None)
             yield last_video, right_preview, top_preview, '', '', gr.update(interactive=True), gr.update(interactive=True)
@@ -644,7 +655,8 @@ def monitor_job(job_id=None):
                     last_progress_update_time = current_time
                     force_update = False
                     right_preview, top_preview = get_preview_updates(last_preview)
-                    yield job.result, right_preview, top_preview, current_desc_value, current_html_value, gr.update(interactive=True), button_update
+                    # Keep showing the last known video until the next chunk arrives
+                    yield job.result or last_video, right_preview, top_preview, current_desc_value, current_html_value, gr.update(interactive=True), button_update
             
             # Fallback for periodic update if no new progress data but job is still running
             elif current_time - last_progress_update_time > 0.5: # More frequent fallback update
@@ -653,12 +665,14 @@ def monitor_job(job_id=None):
                 current_desc_value = job.progress_data.get('desc', 'Processing...') if job.progress_data else 'Processing...'
                 current_html_value = job.progress_data.get('html', make_progress_bar_html(0, 'Processing...')) if job.progress_data else make_progress_bar_html(0, 'Processing...')
                 right_preview, top_preview = get_preview_updates(last_preview)
-                yield job.result, right_preview, top_preview, current_desc_value, current_html_value, gr.update(interactive=True), button_update
+                # Keep showing the last known video until a new chunk arrives
+                yield job.result or last_video, right_preview, top_preview, current_desc_value, current_html_value, gr.update(interactive=True), button_update
 
         elif job.status == JobStatus.COMPLETED:
             # Show the final video and reset the button text
             right_preview, top_preview = get_preview_updates(last_preview)
-            yield job.result, right_preview, top_preview, 'Completed', make_progress_bar_html(100, 'Completed'), gr.update(value="🚀 Add to Queue"), gr.update(interactive=True, value="❌ Cancel Current Job", visible=False)
+            LAST_RESULT_VIDEO = job.result or last_video
+            yield LAST_RESULT_VIDEO, right_preview, top_preview, 'Completed', make_progress_bar_html(100, 'Completed'), gr.update(value="🚀 Add to Queue"), gr.update(interactive=True, value="❌ Cancel Current Job", visible=False)
             break
 
         elif job.status == JobStatus.FAILED:
@@ -692,7 +706,8 @@ interface = create_interface(
     load_lora_file_fn=load_lora_file,
     job_queue=job_queue,
     settings=settings,
-    lora_names=lora_names # Explicitly pass the found LoRA names
+    lora_names=lora_names, # Explicitly pass the found LoRA names
+    latest_completed_fn=lambda: LAST_RESULT_VIDEO
 )
 
 # Launch the interface
