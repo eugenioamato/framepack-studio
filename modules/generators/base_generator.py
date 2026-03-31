@@ -105,6 +105,11 @@ class BaseModelGenerator(ABC):
         Falls back to the default self.model_path if local snapshot can't be found.
         Relies on self.model_repo_id_for_cache and self.model_path being set by subclasses.
         """
+        print(f"Getting offline load path for {self.__class__.__name__}")
+        print(f"model_repo_id_for_cache: {getattr(self, 'model_repo_id_for_cache', 'NOT SET')}")
+        print(f"model_path: {getattr(self, 'model_path', 'NOT SET')}")
+        print(f"offline flag: {getattr(self, 'offline', 'NOT SET')}")
+        
         # Ensure necessary attributes are set by the subclass
         if not hasattr(self, 'model_repo_id_for_cache') or not self.model_repo_id_for_cache:
             print(f"Warning: model_repo_id_for_cache not set in {self.__class__.__name__}. Cannot determine offline path.")
@@ -115,17 +120,35 @@ class BaseModelGenerator(ABC):
             print(f"Warning: model_path not set in {self.__class__.__name__}. Cannot determine fallback for offline path.")
             return None
 
-        snapshot_hash = self._get_snapshot_hash_from_refs(self.model_repo_id_for_cache)
+        # Check if we're in offline mode OR if we have a local cache available
         hf_home = os.environ.get('HF_HOME')
+        should_try_offline = getattr(self, 'offline', False) or (hf_home and os.path.exists(os.path.join(hf_home, 'hub', self.model_repo_id_for_cache)))
+        
+        print(f"Should try offline: {should_try_offline}")
+        
+        if not should_try_offline:
+            print(f"Offline mode not enabled and no local cache found, using online path: {self.model_path}")
+            return self.model_path
+
+        snapshot_hash = self._get_snapshot_hash_from_refs(self.model_repo_id_for_cache)
+        print(f"HF_HOME: {hf_home}")
+        print(f"Snapshot hash: {snapshot_hash}")
 
         if snapshot_hash and hf_home:
             specific_snapshot_path = os.path.join(
                 hf_home, 'hub', self.model_repo_id_for_cache, 'snapshots', snapshot_hash
             )
+            print(f"Checking snapshot path: {specific_snapshot_path}")
             if os.path.isdir(specific_snapshot_path):
+                print(f"Found valid snapshot directory: {specific_snapshot_path}")
                 return specific_snapshot_path
+            else:
+                print(f"Snapshot directory not found: {specific_snapshot_path}")
+        else:
+            print(f"Missing snapshot hash or HF_HOME")
                 
         # If snapshot logic fails or path is not a dir, fallback to the default model path
+        print(f"Falling back to online path: {self.model_path}")
         return self.model_path
         
     def unload_loras(self):

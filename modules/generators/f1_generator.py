@@ -1,5 +1,5 @@
 import torch
-import os # for offline loading path
+import os
 from diffusers_helper.models.hunyuan_video_packed import HunyuanVideoTransformer3DModelPacked
 from diffusers_helper.memory import DynamicSwapInstaller
 from .base_generator import BaseModelGenerator
@@ -33,8 +33,19 @@ class F1ModelGenerator(BaseModelGenerator):
         
         path_to_load = self.model_path # Initialize with the default path
 
-        if self.offline:
+        # Always try offline first if we have local cache, regardless of offline flag
+        hf_home = os.environ.get('HF_HOME')
+        has_local_cache = hf_home and os.path.exists(os.path.join(hf_home, 'hub', self.model_repo_id_for_cache))
+        
+        if self.offline or has_local_cache:
+            if self.offline:
+                print(f"Offline mode enabled for {self.model_name}")
+            else:
+                print(f"Local cache found for {self.model_name}, trying offline load first")
             path_to_load = self._get_offline_load_path() # Calls the method in BaseModelGenerator
+            print(f"Offline path resolved to: {path_to_load}")
+        else:
+            print(f"Online mode for {self.model_name}, using path: {path_to_load}")
 
         # Create the transformer model
         self.transformer = HunyuanVideoTransformer3DModelPacked.from_pretrained(
