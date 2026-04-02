@@ -1,6 +1,8 @@
-C:\ai\torch-2.7.0+cu128-cp312-cp312-win_amd64.whl
-C:\ai\torchvision-0.22.0+cu128-cp312-cp312-win_amd64.whl
-C:\ai\torchaudio-2.7.0+cu128-cp312-cp312-win_amd64.whl
+
+# PyTorch 2.7.0 with CUDA 12.8 support for RTX 5090
+torch==2.7.0
+torchvision==0.22.0
+torchaudio==2.7.0
 
 # Other requirements
 accelerate==1.6.0
