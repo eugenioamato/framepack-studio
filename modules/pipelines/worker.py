@@ -10,7 +10,7 @@ from PIL import Image
 from PIL.PngImagePlugin import PngInfo
 from diffusers_helper.models.mag_cache import MagCache
 from diffusers_helper.utils import save_bcthw_as_mp4, generate_timestamp, resize_and_center_crop
-from diffusers_helper.memory import cpu, gpu, move_model_to_device_with_memory_preservation, offload_model_from_device_for_memory_preservation, fake_diffusers_current_device, unload_complete_models, load_model_as_complete
+from diffusers_helper.memory import cpu, gpu, move_model_to_device_with_memory_preservation, offload_model_from_device_for_memory_preservation, fake_diffusers_current_device, unload_complete_models, load_model_as_complete, DynamicSwapInstaller
 from diffusers_helper.thread_utils import AsyncStream
 from diffusers_helper.gradio.progress_bar import make_progress_bar_html
 from diffusers_helper.hunyuan import vae_decode
@@ -99,6 +99,9 @@ def worker(
     """
 
     random_generator = torch.Generator("cpu").manual_seed(seed)
+    _t_job_start = time.time()
+    def _timing(label):
+        print(f"[TIMING] {label}: +{time.time()-_t_job_start:.1f}s")
 
     unload_enhancing_model()
     unload_captioning_model()
@@ -118,7 +121,7 @@ def worker(
     print(f"Worker: Selected LoRAs for this worker: {selected_loras}")
     
     # Import globals from the main module
-    from __main__ import high_vram, args, text_encoder, text_encoder_2, tokenizer, tokenizer_2, vae, image_encoder, feature_extractor, prompt_embedding_cache, settings, stream
+    from __main__ import high_vram, medium_vram, args, text_encoder, text_encoder_2, tokenizer, tokenizer_2, vae, image_encoder, feature_extractor, prompt_embedding_cache, settings, stream
     
     # Ensure any existing LoRAs are unloaded from the current generator
     if studio_module.current_generator is not None:
@@ -244,8 +247,17 @@ def worker(
         if not high_vram:
             # Unload everything *except* the potentially active transformer
             unload_complete_models(text_encoder, text_encoder_2, image_encoder, vae)
-            if studio_module.current_generator is not None and studio_module.current_generator.transformer is not None:
-                offload_model_from_device_for_memory_preservation(studio_module.current_generator.transformer, target_device=gpu, preserved_memory_gb=8)
+            if not medium_vram:
+                if studio_module.current_generator is not None and studio_module.current_generator.transformer is not None:
+                    offload_model_from_device_for_memory_preservation(studio_module.current_generator.transformer, target_device=gpu, preserved_memory_gb=8)
+            else:
+                # medium_vram: explicitly move old transformer to CPU before loading new one
+                if studio_module.current_generator is not None and studio_module.current_generator.transformer is not None:
+                    import gc
+                    studio_module.current_generator.transformer.to('cpu')
+                    studio_module.current_generator.transformer = None
+                    gc.collect()
+                    torch.cuda.empty_cache()
 
 
         # --- Model Loading / Switching ---
@@ -263,6 +275,7 @@ def worker(
             image_encoder=image_encoder,
             feature_extractor=feature_extractor,
             high_vram=high_vram,
+            medium_vram=medium_vram,
             prompt_embedding_cache=prompt_embedding_cache,
             offline=args.offline,
             settings=settings
@@ -275,8 +288,9 @@ def worker(
         if studio_module.current_generator:
              print(f"Worker: studio_module.current_generator.transformer is {type(studio_module.current_generator.transformer)}")        
              
-        # Load the transformer model
+        # Load the transformer model (medium_vram: stays on CPU until after encoding)
         studio_module.current_generator.load_model()
+        _timing("transformer loaded to CPU")
         
         # Ensure the model has no LoRAs loaded
         print(f"Ensuring {model_type} model has no LoRAs loaded")
@@ -311,6 +325,7 @@ def worker(
         stream_to_use.output_queue.push(('progress', (None, '', make_progress_bar_html(0, 'Text encoding all prompts...'))))
         
         # THE FOLLOWING CODE SHOULD BE INSIDE THE TRY BLOCK
+        _timing("start text encoding")
         if not high_vram:
             fake_diffusers_current_device(text_encoder, gpu)
             load_model_as_complete(text_encoder_2, target_device=gpu)
@@ -522,6 +537,7 @@ def worker(
                     end_clip_embedding = end_clip_embedding.to(studio_module.current_generator.transformer.dtype)
                     # Need that dtype conversion for end_clip_embedding? I don't think so, but it was in the original PR.
         
+        _timing("image encoding done")
         if not high_vram: # Offload VAE and image_encoder if they were loaded
             offload_model_from_device_for_memory_preservation(vae, target_device=gpu, preserved_memory_gb=settings.get("gpu_memory_preservation"))
             offload_model_from_device_for_memory_preservation(image_encoder, target_device=gpu, preserved_memory_gb=settings.get("gpu_memory_preservation"))
@@ -565,10 +581,34 @@ def worker(
         # PROMPT BLENDING: Track section index
         section_idx = 0
 
+        # medium_vram: move transformer to GPU now — after encoding, full VRAM available for generation
+        medium_vram_dynamicswap = False  # True when resolution is too large for full-GPU inference
+        if medium_vram and studio_module.current_generator.transformer is not None:
+            _timing("moving transformer to GPU (deferred medium_vram)")
+            studio_module.current_generator.transformer.to(device=gpu)
+            torch.cuda.empty_cache()
+            _timing("transformer on GPU")
+            # Check if this resolution requires DynamicSwap based on spatial tokens only.
+            # Temporal dimension (latent_window_size) does NOT drive VRAM pressure — spatial does.
+            # Threshold >3000 spatial tokens catches 512x512 (4096) and 768x640 (7680) but not 384x384 (2304).
+            _n_spatial_tokens = (height // 8) * (width // 8)
+            if _n_spatial_tokens > 3000:
+                medium_vram_dynamicswap = True
+                _timing(f"high-res ({width}x{height}, {_n_spatial_tokens} spatial tokens): switching to DynamicSwap, offloading transformer")
+                studio_module.current_generator.transformer.to('cpu')
+                torch.cuda.empty_cache()
+
         # Load LoRAs if selected
         if selected_loras:
             lora_folder_from_settings = settings.get("lora_dir")
             studio_module.current_generator.load_loras(selected_loras, lora_folder_from_settings, lora_loaded_names, lora_values)
+        _timing("LoRAs loaded, starting generation loop")
+
+        # Install DynamicSwap AFTER LoRAs so all modules (base + adapters) are patched
+        if medium_vram_dynamicswap:
+            _timing("installing DynamicSwap on transformer+LoRAs")
+            DynamicSwapInstaller.install_model(studio_module.current_generator.transformer, device=gpu, dtype=torch.bfloat16)
+            _timing("DynamicSwap installed")
 
             # --- Callback for progress ---
         def callback(d):
@@ -835,12 +875,15 @@ def worker(
             # Print debug info
             print(f"{model_type} model section {section_idx+1}/{total_latent_sections}, latent_padding={latent_padding}")
 
-            if not high_vram:
-                # Unload VAE etc. before loading transformer
+            if not high_vram and not medium_vram:
+                # low_vram: unload auxiliaries, load transformer layer-by-layer
                 unload_complete_models(vae, text_encoder, text_encoder_2, image_encoder)
                 move_model_to_device_with_memory_preservation(studio_module.current_generator.transformer, target_device=gpu, preserved_memory_gb=settings.get("gpu_memory_preservation"))
                 if selected_loras:
                     studio_module.current_generator.move_lora_adapters_to_device(gpu)
+            elif medium_vram and medium_vram_dynamicswap:
+                # DynamicSwap is installed — parameters lazily copied to GPU on access, no explicit load needed
+                torch.cuda.empty_cache()
 
 
             from diffusers_helper.pipelines.k_diffusion_hunyuan import sample_hunyuan
@@ -885,10 +928,19 @@ def worker(
             # Update history latents using the generator
             history_latents = studio_module.current_generator.update_history_latents(history_latents, generated_latents)
 
-            if not high_vram:
+            if not high_vram and not medium_vram:
                 if selected_loras:
                     studio_module.current_generator.move_lora_adapters_to_device(cpu)
                 offload_model_from_device_for_memory_preservation(studio_module.current_generator.transformer, target_device=gpu, preserved_memory_gb=8)
+                load_model_as_complete(vae, target_device=gpu)
+            elif medium_vram:
+                if medium_vram_dynamicswap:
+                    # DynamicSwap: weights already CPU-resident, just free any cached GPU copies
+                    torch.cuda.empty_cache()
+                else:
+                    _timing('offloading transformer to CPU for VAE decode')
+                    studio_module.current_generator.transformer.to('cpu')
+                    torch.cuda.empty_cache()
                 load_model_as_complete(vae, target_device=gpu)
 
             # Get real history latents using the generator
@@ -909,7 +961,7 @@ def worker(
                 print(f"{model_type} model section {section_idx+1}/{total_latent_sections}, history_pixels shape: {history_pixels.shape}")
 
             if not high_vram:
-                unload_complete_models()
+                unload_complete_models()  # unloads VAE
 
             output_filename = os.path.join(output_dir, f'{job_id}_{total_generated_latent_frames}.mp4')
             save_bcthw_as_mp4(history_pixels, output_filename, fps=30, crf=settings.get("mp4_crf"))
@@ -918,6 +970,11 @@ def worker(
 
             if is_last_section:
                 break
+
+            if medium_vram and not medium_vram_dynamicswap:
+                _timing('reloading transformer to GPU for next section')
+                studio_module.current_generator.transformer.to(gpu)
+                _timing('transformer back on GPU')
 
             section_idx += 1  # PROMPT BLENDING: increment section index
 

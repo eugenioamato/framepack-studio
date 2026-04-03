@@ -122,6 +122,11 @@ parser.add_argument("--port", type=int, required=False)
 parser.add_argument("--inbrowser", action='store_true')
 parser.add_argument("--lora", type=str, default=None, help="Lora path (comma separated for multiple)")
 parser.add_argument("--offline", action='store_true', help="Run in offline mode")
+parser.add_argument('--high-vram', action='store_true', dest='high_vram', help="Force high-VRAM mode: keep all models on GPU (requires 60GB+ VRAM)")
+parser.add_argument('--benchmark', type=str, default=None, metavar='JSON',
+    help="Benchmark mode: load models then run this job JSON file without starting the UI")
+parser.add_argument('--benchmark-seed', type=int, default=None, dest='benchmark_seed',
+    help="Seed override for --benchmark mode (default: original seed + 1)")
 args = parser.parse_args()
 
 print(args)
@@ -134,10 +139,12 @@ else:
         del os.environ['HF_HUB_OFFLINE']
 
 free_mem_gb = get_cuda_free_memory_gb(gpu)
-high_vram = free_mem_gb > 60
+high_vram = args.high_vram or free_mem_gb > 60
+medium_vram = not high_vram and free_mem_gb > 25  # 26-60 GB: keep transformer on GPU, swap auxiliaries
 
 print(f'Free VRAM {free_mem_gb} GB')
 print(f'High-VRAM Mode: {high_vram}')
+print(f'Medium-VRAM Mode: {medium_vram}')
 
 # Load models
 text_encoder = LlamaModel.from_pretrained("hunyuanvideo-community/HunyuanVideo", subfolder='text_encoder', torch_dtype=torch.float16).cpu()
@@ -161,8 +168,8 @@ text_encoder_2.eval()
 image_encoder.eval()
 
 if not high_vram:
-   vae.enable_slicing()
-   vae.enable_tiling()
+    vae.enable_slicing()
+    vae.enable_tiling()
 
 
 vae.to(dtype=torch.float16)
@@ -197,6 +204,9 @@ else:
     text_encoder_2.to(gpu)
     image_encoder.to(gpu)
     vae.to(gpu)
+
+if medium_vram:
+    print('Medium-VRAM: transformer will be kept on GPU without DynamicSwap; auxiliary models managed on demand.')
 
 stream = AsyncStream()
 
@@ -693,6 +703,100 @@ def monitor_job(job_id=None):
         # Wait a bit before checking again
         time.sleep(0.05)  # Reduced wait time for more responsive updates
 
+
+# ── Benchmark mode ────────────────────────────────────────────────────────────
+if args.benchmark:
+    import json as _json
+    import sys as _sys
+
+    class _NullQueue:
+        def push(self, *a, **kw): pass
+        def top(self): return None
+
+    class _NullStream:
+        def __init__(self):
+            self.output_queue = _NullQueue()
+            self.input_queue  = _NullQueue()
+
+    with open(args.benchmark) as _f:
+        _bm = _json.load(_f)
+
+    _bm_seed = args.benchmark_seed if args.benchmark_seed is not None else _bm['seed'] + 1
+    _W, _H   = _bm.get('resolutionW', 640), _bm.get('resolutionH', 640)
+    _lt      = _bm.get('latent_type', 'Noise')
+
+    if _lt == 'Noise':
+        _img = np.random.randint(0, 256, (_H, _W, 3), dtype=np.uint8)
+    elif _lt == 'White':
+        _img = np.ones((_H, _W, 3), dtype=np.uint8) * 255
+    else:
+        _img = np.zeros((_H, _W, 3), dtype=np.uint8)
+
+    _loras_dict     = _bm.get('loras', {})
+    _selected_loras = list(_loras_dict.keys())
+    _lora_values    = list(_loras_dict.values())
+
+    print(f"\n{'='*56}")
+    print(f"  BENCHMARK MODE")
+    print(f"  Reference : {args.benchmark}")
+    print(f"  Model     : {_bm.get('model_type')}  |  Seed: {_bm_seed}  |  Steps: {_bm.get('steps')}  |  Length: {_bm.get('total_second_length')}s")
+    print(f"  LoRAs     : {_selected_loras}")
+    print(f"{'='*56}\n")
+
+    _bm_stream = _NullStream()
+    _t0 = time.time()
+
+    try:
+        worker(
+            model_type=_bm.get('model_type', 'Original'),
+            input_image=_img,
+            end_frame_image=None,
+            end_frame_strength=_bm.get('end_frame_strength', 1.0),
+            prompt_text=_bm.get('prompt', ''),
+            n_prompt=_bm.get('negative_prompt', ''),
+            seed=_bm_seed,
+            total_second_length=_bm.get('total_second_length', 6),
+            latent_window_size=_bm.get('latent_window_size', 9),
+            steps=_bm.get('steps', 25),
+            cfg=_bm.get('cfg', 1.0),
+            gs=_bm.get('gs', 10.0),
+            rs=_bm.get('rs', 0.0),
+            use_teacache=_bm.get('use_teacache', False),
+            teacache_num_steps=_bm.get('teacache_num_steps', 25),
+            teacache_rel_l1_thresh=_bm.get('teacache_rel_l1_thresh', 0.15),
+            use_magcache=_bm.get('use_magcache', True),
+            magcache_threshold=_bm.get('magcache_threshold', 0.1),
+            magcache_max_consecutive_skips=_bm.get('magcache_max_consecutive_skips', 2),
+            magcache_retention_ratio=_bm.get('magcache_retention_ratio', 0.25),
+            blend_sections=_bm.get('blend_sections', 4),
+            latent_type=_lt,
+            selected_loras=_selected_loras,
+            has_input_image=_bm.get('has_input_image', False),
+            lora_values=_lora_values,
+            job_stream=_bm_stream,
+            output_dir=settings.get('output_dir', 'outputs'),
+            metadata_dir=settings.get('metadata_dir', 'metadata'),
+            input_files_dir=settings.get('input_files_dir', 'inputs'),
+            input_image_path=None,
+            end_frame_image_path=None,
+            resolutionW=_W,
+            resolutionH=_H,
+            lora_loaded_names=_selected_loras,
+            combine_with_source=_bm.get('combine_with_source', False),
+            num_cleaned_frames=_bm.get('num_cleaned_frames', 5),
+            save_metadata_checked=False,
+        )
+    except Exception as _e:
+        print(f"\n[BENCHMARK] ERROR: {_e}")
+        import traceback; traceback.print_exc()
+        _sys.exit(1)
+
+    _total = time.time() - _t0
+    print(f"\n{'='*56}")
+    print(f"  [BENCHMARK] TOTAL TIME: {_total:.1f}s")
+    print(f"{'='*56}")
+    _sys.exit(0)
+# ── End benchmark mode ─────────────────────────────────────────────────────────
 
 # Set Gradio temporary directory from settings
 os.environ["GRADIO_TEMP_DIR"] = settings.get("gradio_temp_dir")

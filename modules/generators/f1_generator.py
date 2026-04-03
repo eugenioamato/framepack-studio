@@ -58,12 +58,13 @@ class F1ModelGenerator(BaseModelGenerator):
         self.transformer.to(dtype=torch.bfloat16)
         self.transformer.requires_grad_(False)
         
-        # Set up dynamic swap if not in high VRAM mode
-        if not self.high_vram:
-            DynamicSwapInstaller.install_model(self.transformer, device=self.gpu)
-        else:
-            # In high VRAM mode, move the entire model to GPU
+        # Set up dynamic swap or GPU placement
+        if self.high_vram:
             self.transformer.to(device=self.gpu)
+        elif self.medium_vram:
+            pass  # transformer stays on CPU; worker moves it to GPU after text/image encoding
+        else:
+            DynamicSwapInstaller.install_model(self.transformer, device=self.gpu)
         
         print(f"{self.model_name} Transformer Loaded from {path_to_load}.")
         return self.transformer

@@ -20,6 +20,7 @@ class BaseModelGenerator(ABC):
                  image_encoder, 
                  feature_extractor, 
                  high_vram=False,
+                 medium_vram=False,
                  prompt_embedding_cache=None,
                  settings=None,
                  offline=False): # NEW: offline flag
@@ -47,6 +48,7 @@ class BaseModelGenerator(ABC):
         self.image_encoder = image_encoder
         self.feature_extractor = feature_extractor
         self.high_vram = high_vram
+        self.medium_vram = medium_vram
         self.prompt_embedding_cache = prompt_embedding_cache or {}
         self.settings = settings
         self.offline = offline 

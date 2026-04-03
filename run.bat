@@ -1,5 +1,13 @@
 @echo off
 echo Starting FramePack-Studio...
+echo.
+echo VRAM Modes (auto-detected):
+echo   low_vram   - ^< 26 GB free: DynamicSwap, transformer swaps per chunk
+echo   medium_vram - 26-60 GB free: transformer stays on GPU, no per-chunk reloads (RTX 5090 32GB)
+echo   high_vram  - ^> 60 GB free: all models on GPU (A100/H100)
+echo.
+echo To force high-vram mode (60GB+ cards): add --high-vram to the command below
+echo.
 
 REM Check if Python is installed (basic check)
 where python >nul 2>&1
